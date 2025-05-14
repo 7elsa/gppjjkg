@@ -1,0 +1,158 @@
+param (
+    [Parameter(Mandatory=$true)]
+    [string]$JsonFilePath,
+
+    [Parameter(Mandatory=$true)]
+    [string]$CsvFilePath,
+
+    [string]$JqPath = "jq" # jq実行可能ファイルへのパス。PATHにあれば "jq" のままでOK
+)
+
+# jq フィルターを定義 (ヒアストリングを使用)
+# このフィルターはJSONをフラット化し、各インスタンスを1つのJSONオブジェクトとして出力します
+$jqFilter = @'
+# Function to recursively flatten a JSON structure
+# $prefix: string to prepend to keys for disambiguation
+# $input: the object/array/scalar to flatten
+def deep_flatten($prefix; $input):
+  if ($input | type) == "object" then
+    reduce ($input | keys_unsorted[]) as $key ( # Iterate over keys in the object
+      {};  # Initial accumulator for merged results
+      . as $acc | # Current accumulated object
+      # Recursively call deep_flatten for the child value
+      ($input[$key] | deep_flatten(if $prefix == "" then $key else "\($prefix)_\($key)" end; .)) as $flattened_child |
+      $acc + $flattened_child # Merge the results from the child
+    )
+  elif ($input | type) == "array" then
+    reduce range(0; $input | length) as $i ( # Iterate over array indices
+      {};  # Initial accumulator
+      . as $acc |
+      # Recursively call deep_flatten for the array element
+      ($input[$i] | deep_flatten(if $prefix == "" then "\($i)" else "\($prefix)_\($i)" end; .)) as $flattened_element |
+      $acc + $flattened_element # Merge the results
+    )
+  else # Scalar value or null
+    # Create a single-key object: { "prefix_key": value }
+    # If $input is null, set value to an empty string. Convert all scalars to string.
+    { (if $prefix == "" then "value" else $prefix end) : (if $input == null then "" else ($input | tostring) end) }
+  end;
+
+# Main jq query
+.Reservations[] as $reservation | # For each reservation
+$reservation.Instances[] | # For each instance within that reservation
+(
+  # Start with Reservation-level information
+  {
+    "Reservation_OwnerId": ($reservation.OwnerId // ""), # Use // "" for null safety
+    "Reservation_ReservationId": ($reservation.ReservationId // ""),
+    "Reservation_Groups": (
+      # Handle the Groups array:
+      if $reservation.Groups == null then "" # Null becomes empty string
+      elif ($reservation.Groups | type) == "array" then
+        if ($reservation.Groups | length) == 0 then "" # Empty array becomes empty string
+        # If it's an array of simple scalar values, join them with a comma
+        elif ($reservation.Groups | all(scalars)) then ($reservation.Groups | map(tostring) | join(","))
+        # Otherwise (array of objects/mixed types), convert the whole array to a JSON string
+        else ($reservation.Groups | tojson)
+        end
+      else ($reservation.Groups | tostring) # If not an array (e.g., string, number), convert to string
+      end
+    )
+  } + # Merge with the flattened Instance object
+  # Flatten the current Instance object itself
+  ( . as $instance_obj | deep_flatten(""; $instance_obj) )
+)
+'@
+
+# 1. jqが利用可能か確認
+try {
+    & $JqPath --version -e $null # `-e $null` で標準出力を抑制
+    Write-Verbose "jq found at $JqPath"
+} catch {
+    Write-Error "jqコマンドが見つからないか、実行できませんでした。jqがインストールされ、PATHに含まれているか、-JqPathパラメータで正しいパスを指定してください。"
+    Write-Error "エラー詳細: $($_.Exception.Message)"
+    exit 1
+}
+
+# 2. JSONファイルを読み込む
+try {
+    # -Raw を指定してファイル全体を単一の文字列として読み込む (jqへの入力に適している)
+    $jsonInput = Get-Content -Path $JsonFilePath -Raw -ErrorAction Stop
+    Write-Verbose "JSON file '$JsonFilePath' read successfully."
+} catch {
+    Write-Error "JSONファイル '$JsonFilePath' の読み込みに失敗しました: $($_.Exception.Message)"
+    exit 1
+}
+
+# 3. jqコマンドを実行してJSONをフラット化
+$flattenedJsonLines = @() # 初期化
+try {
+    # jqにJSONコンテンツを標準入力経由で渡し、フィルターを適用
+    # -c (または --compact-output) オプションで、各JSONオブジェクトが1行に出力されるようにする
+    Write-Verbose "Executing jq with filter..."
+    $flattenedJsonLines = $jsonInput | & $JqPath -c $jqFilter
+    Write-Verbose "jq processing completed."
+    if ($null -eq $flattenedJsonLines -or $flattenedJsonLines.Length -eq 0) {
+        Write-Warning "jq did not produce any output. The source JSON might be empty or not match the expected structure."
+    }
+} catch {
+    Write-Error "jq処理中にエラーが発生しました: $($_.Exception.Message)"
+    # jq自体のエラーメッセージが例外に含まれていることが多い
+    # より詳細なエラーは $Error[0] などで確認できる場合がある
+    exit 1
+}
+
+# 4. jqの出力 (JSONオブジェクトのストリーム) をPowerShellオブジェクトに変換
+$outputObjects = [System.Collections.Generic.List[PSCustomObject]]::new()
+if ($null -ne $flattenedJsonLines) {
+    # $flattenedJsonLinesが単一の文字列（複数行含む）か、文字列の配列かを判定
+    $linesToProcess = if ($flattenedJsonLines -is [string]) {
+                        # 単一文字列の場合、改行で分割
+                        $flattenedJsonLines.Split([Environment]::NewLine, [StringSplitOptions]::RemoveEmptyEntries)
+                    } else {
+                        # 文字列の配列の場合はそのまま使用
+                        $flattenedJsonLines
+                    }
+
+    foreach ($jsonLine in $linesToProcess) {
+        if (-not [string]::IsNullOrWhiteSpace($jsonLine)) {
+            try {
+                $psObject = $jsonLine | ConvertFrom-Json -ErrorAction Stop
+                $outputObjects.Add($psObject)
+            } catch {
+                Write-Warning "jqからのJSON行の解析に失敗しました: '$jsonLine'。エラー: $($_.Exception.Message)"
+            }
+        }
+    }
+    Write-Verbose "Successfully parsed $($outputObjects.Count) objects from jq output."
+}
+
+# 5. PowerShellオブジェクトをCSVファイルに出力
+if ($outputObjects.Count -gt 0) {
+    try {
+        # PowerShellのバージョンに応じて適切なUTF-8エンコーディングを選択
+        # PowerShell 7+ : utf8bom (Excelでの互換性向上)
+        # PowerShell 5.1: UTF8 (BOMなしUTF-8)
+        $psMajorVersion = $PSVersionTable.PSVersion.Major
+        $csvEncoding = "Default" # フォールバック
+
+        if ($psMajorVersion -ge 6) {
+            $csvEncoding = "utf8bom"
+        } else {
+            # PowerShell 5.1でBOM付きUTF-8が厳密に必要な場合、ConvertTo-Csv | Set-Content -Encoding UTF8 の方が確実な場合も
+            $csvEncoding = "UTF8"
+        }
+        
+        Write-Host "CSVファイル '$CsvFilePath' をエンコーディング '$csvEncoding' で出力します (PowerShell Version: $psMajorVersion)..."
+        $outputObjects | Export-Csv -Path $CsvFilePath -NoTypeInformation -Encoding $csvEncoding -ErrorAction Stop
+        Write-Host "CSVファイル '$CsvFilePath' が正常に出力されました。"
+    } catch {
+        Write-Error "CSVファイル '$CsvFilePath' へのエクスポートに失敗しました: $($_.Exception.Message)"
+    }
+} else {
+    Write-Warning "CSVに出力するデータがありません。CSVファイルは空になるか、作成されない可能性があります。"
+    # 必要であれば、ヘッダーのみの空のCSVファイルを作成する処理をここに追加
+    # Set-Content -Path $CsvFilePath -Value "" # 空ファイル作成
+}
+
+Write-Verbose "Script execution finished."
