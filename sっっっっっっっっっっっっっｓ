@@ -1,0 +1,18 @@
+.SecurityGroups[] |
+  .GroupID as $gid |
+  # IpPermmissions 配列を取得。存在しないかnullなら空配列に。
+  # その後、もし空配列なら、ダミーの要素(空のパーミッション)一つを持つ配列に置き換えることで、
+  # GroupID が必ず出力されるようにする。
+  ( (.IpPermmissions // []) | if length == 0 then [{UserIdGroupPairs:[], IpRanges:[]}] else . end )[] as $perm |
+  # UserIdGroupPairs から GroupId のリストを生成。元の配列が空、または GroupId を持つ要素がなければ [""] になる。
+  ( [$perm.UserIdGroupPairs[]?.GroupId] | if length == 0 then [""] else . end ) as $sgs |
+  # IpRanges から CiderIP のリストを生成。元の配列が空、または CiderIP を持つ要素がなければ [""] になる。
+  ( [$perm.IpRanges[]?.CiderIP] | if length == 0 then [""] else . end ) as $ips |
+  # 生成されたリスト ($sgs と $ips) をそれぞれ展開して組み合わせる。
+  $sgs[] as $sg_val |
+  $ips[] as $ip_val |
+  {
+    GroupID: $gid,
+    SourceSecurityGroup: ($sg_val // ""), # 値がnullの場合も考慮して空文字にフォールバック
+    SourceIp: ($ip_val // "")           # 値がnullの場合も考慮して空文字にフォールバック
+  }
