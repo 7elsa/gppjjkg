@@ -1,0 +1,8 @@
+(["NotebookInstanceArn"] | @csv),
+(
+  .NotebookInstances[] |
+  {
+    NotebookInstanceArn: .NotebookInstanceArn
+  } |
+  [.NotebookInstanceArn] | @csv
+)
