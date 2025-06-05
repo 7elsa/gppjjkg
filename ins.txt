@@ -1,0 +1,20 @@
+(["InstanceId", "SecurityGroupId"] | @csv),
+(
+  # 各Reservationsオブジェクトを展開
+  .Reservations[] |
+  # 各Instancesオブジェクトを展開
+  .Instances[] |
+  # InstanceIdを変数に格納
+  .InstanceId as $instanceId |
+  # SecurityGroups配列を取得。存在しないかnullなら空配列に。
+  # その後、もし空配列なら、ダミーの要素(GroupIdが空文字)一つを持つ配列に置き換える。
+  # これにより、SecurityGroupsがないInstanceIdも必ず1行出力されるようにする。
+  ( (.SecurityGroups // []) | if length == 0 then [{GroupId: ""}] else . end )[] as $sg |
+  # 結果のオブジェクトを構築
+  {
+    InstanceId: $instanceId,
+    SecurityGroupId: ($sg.GroupId // "") # GroupIdがnullの場合も考慮して空文字にフォールバック
+  } |
+  # 配列に変換してCSV形式で出力
+  [.InstanceId, .SecurityGroupId] | @csv
+)
