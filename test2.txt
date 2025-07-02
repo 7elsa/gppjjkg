@@ -1,0 +1,108 @@
+# 文字化け対策
+chcp 65001 | Out-Null
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+# =============================================================================
+# 初期設定
+# =============================================================================
+try {
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    $scriptRoot = $PSScriptRoot
+    $jqPath = $scriptRoot + "\jq.exe"
+    $inputDir = $scriptRoot + "\input_json"
+    $jqQueryDir = $scriptRoot + "\jq_query"
+    $outputDir = $scriptRoot + "\output_csv"
+
+    # 必須ファイルの存在チェック
+    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
+    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
+    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
+
+    # 出力フォルダがなければ作成
+    if (-not (Test-Path -Path $outputDir -PathType Container)) {
+        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
+        New-Item -Path $outputDir -ItemType Directory | Out-Null
+    }
+
+    # =============================================================================
+    # メイン処理
+    # =============================================================================
+
+    $jsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
+
+    if ($null -eq $jsonFiles) {
+        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
+        exit
+    }
+
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    foreach ($jsonFile in $jsonFiles) {
+        
+        Write-Host "--------------------------------------------------"
+        Write-Host "処理開始: $($jsonFile.FullName)"
+
+        $baseName = $jsonFile.BaseName
+        $subDirName = $jsonFile.Directory.Name
+
+        # ---
+        # 1. BOMなしUTF-8へ変換
+        # ---
+        try {
+            $content = Get-Content -Path $jsonFile.FullName -Raw
+            [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
+            Write-Host "[1/2] BOMなしUTF-8へ変換完了"
+        }
+        catch {
+            Write-Warning "[1/2] UTF-8変換中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+
+        # ---
+        # 2. JQでCSVへ変換
+        # ---
+        try {
+            $jqQueryFile = $jqQueryDir + "\" + $subDirName + "\" + $baseName + ".jq"
+            $outputSubDir = $outputDir + "\" + $subDirName
+            $csvOutputFile = $outputSubDir + "\" + $baseName + ".csv"
+
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
+                Write-Warning "[2/2] 対応するJQファイルが見つかりません。スキップします: $jqQueryFile"
+                continue
+            }
+
+            if (-not (Test-Path -Path $outputSubDir -PathType Container)) {
+                New-Item -Path $outputSubDir -ItemType Directory | Out-Null
+            }
+
+            # JQクエリファイルの中身を文字列として読み込む
+            $jqFilterString = Get-Content -Path $jqQueryFile -Raw
+
+            # jqコマンドの引数を定義 (クエリ文字列を直接渡す)
+            $jqArgs = @(
+                '-r',
+                $jqFilterString
+            )
+
+            # JSONファイルの中身をパイプでjqに渡し、実行する
+            $jqOutput = Get-Content -Path $jsonFile.FullName -Raw | & $jqPath $jqArgs 2>&1
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "jq.exeがエラーを返しました: $jqOutput"
+            }
+
+            $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
+            
+            Write-Host "[2/2] CSVファイルを作成しました: $csvOutputFile"
+        }
+        catch {
+            Write-Warning "[2/2] JQ処理中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+    }
+    Write-Host "--------------------------------------------------"
+    Write-Host "全ての処理が完了しました。"
+}
+catch {
+    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
+}
