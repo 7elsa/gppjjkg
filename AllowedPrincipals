@@ -1,13 +1,10 @@
 (["DirectoryId", "WorkspaceSecurityGroupId", "CustomSecurityGroupId"] | @csv),
 (
   .Directories[] |
-  .DirectoryId as $dirId |
-  .WorkspaceCreationProperties.CustomSecurityGroupId as $customSg |
-  ( .WorkspaceSecurityGroupId // [] | if length == 0 then [""] else . end )[] as $wsSg |
   {
-    DirectoryId: $dirId,
-    WorkspaceSecurityGroupId: ($wsSg // ""),
-    CustomSecurityGroupId: ($customSg // "")
+    DirectoryId: .DirectoryId,
+    WorkspaceSecurityGroupId: .WorkspaceSecurityGroupId,
+    CustomSecurityGroupId: .WorkspaceCreationProperties.CustomSecurityGroupId
   } |
   [.DirectoryId, .WorkspaceSecurityGroupId, .CustomSecurityGroupId] | @csv
 )
