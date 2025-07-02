@@ -1,11 +1,9 @@
-# 変数を仮設定
+# PowerShellのコマンドを使わず、単純な文字列連結のみでパスを作成します
 $jqQueryDir = "C:\Users\123456\scripts\jq_query"
 $subDirName = "AAA"
 $baseName   = "filename"
 
-# 1段階ずつパスを結合する、より安全な方法
-$tempPath = Join-Path -Path $jqQueryDir -ChildPath $subDirName
-$jqQueryFile = Join-Path -Path $tempPath -ChildPath "$($baseName).jq"
+$finalPath = $jqQueryDir + "\" + $subDirName + "\" + $baseName + ".jq"
 
-# 生成されたパスを画面に表示
-Write-Host $jqQueryFile
+Write-Host "--- 生成されたパス ---"
+Write-Host $finalPath
