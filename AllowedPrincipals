@@ -1,10 +1,11 @@
-(["DirectoryId", "WorkspaceSecurityGroupId", "CustomSecurityGroupId"] | @csv),
+(["InstanceId", "GroupId"] | @csv),
 (
-  .Directories[] |
+  .Reservations[] | .Instances[] |
+  .InstanceId as $instanceId |
+  ( [ .NetworkInterfaces[].Groups[].GroupId ] | if length == 0 then [""] else . end )[] as $groupId |
   {
-    DirectoryId: .DirectoryId,
-    WorkspaceSecurityGroupId: .WorkspaceSecurityGroupId,
-    CustomSecurityGroupId: .WorkspaceCreationProperties.CustomSecurityGroupId
+    InstanceId: $instanceId,
+    GroupId: ($groupId // "")
   } |
-  [.DirectoryId, .WorkspaceSecurityGroupId, .CustomSecurityGroupId] | @csv
+  [.InstanceId, .GroupId] | @csv
 )
