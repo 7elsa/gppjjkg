@@ -1,0 +1,28 @@
+# スクリプトが置かれているディレクトリのパスを取得
+$scriptDirectory = $PSScriptRoot
+
+# 読み込むCSVファイルの相対パスを指定
+$csvRelativePath = "abc\aaa.csv"
+# CSVファイルのフルパスを構築
+$csvFilePath = Join-Path -Path $scriptDirectory -ChildPath $csvRelativePath
+
+# 出力するJSONファイルの名前を指定
+$jsonFileName = "output.json"
+# JSONファイルのフルパスを構築
+$jsonFilePath = Join-Path -Path $scriptDirectory -ChildPath $jsonFileName
+
+# CSVファイルを読み込み、JSONに変換してUTF-8でファイルに出力
+try {
+    # CSVファイルが存在するかチェック
+    if (-not (Test-Path -Path $csvFilePath -PathType Leaf)) {
+        # throwで意図的にエラーを発生させ、catchブロックに処理を移す
+        throw "指定されたCSVファイルが見つかりません: $csvFilePath"
+    }
+
+    Import-Csv -Path $csvFilePath | ConvertTo-Json | Out-File -FilePath $jsonFilePath -Encoding UTF8
+    Write-Host "✅ 変換が完了しました。'$jsonFilePath' に保存されました。"
+}
+catch {
+    # エラーメッセージを出力します。引用符が " であることを確認してください。
+    Write-Error "❌ 処理中にエラーが発生しました: $($_.Exception.Message)"
+}
