@@ -1,11 +1,13 @@
-(["LoadbalancerName", "SecurityGroup"] | @csv),
+(["DirectoryId", "WorkspaceSecurityGroupId", "CustomSecurityGroupId"] | @csv),
 (
-  .LoadBalancers[] |
-  .LoadbalancerName as $lbName |
-  ( .SecurityGroups // [] | if length == 0 then [""] else . end )[] as $sg |
+  .Directories[] |
+  .DirectoryId as $dirId |
+  .WorkspaceCreationProperties.CustomSecurityGroupId as $customSg |
+  ( .WorkspaceSecurityGroupId // [] | if length == 0 then [""] else . end )[] as $wsSg |
   {
-    LoadbalancerName: $lbName,
-    SecurityGroup: ($sg // "")
+    DirectoryId: $dirId,
+    WorkspaceSecurityGroupId: ($wsSg // ""),
+    CustomSecurityGroupId: ($customSg // "")
   } |
-  [.LoadbalancerName, .SecurityGroup] | @csv
+  [.DirectoryId, .WorkspaceSecurityGroupId, .CustomSecurityGroupId] | @csv
 )
