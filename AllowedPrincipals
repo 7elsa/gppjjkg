@@ -1,9 +1,11 @@
-(["ServicePermissionId", "Principal"] | @csv),
+(["LoadbalancerName", "SecurityGroup"] | @csv),
 (
-  .AllowedPrincipals[] |
+  .LoadBalancers[] |
+  .LoadbalancerName as $lbName |
+  ( .SecurityGroups // [] | if length == 0 then [""] else . end )[] as $sg |
   {
-    ServicePermissionId: .ServicePermissionId,
-    Principal: .Principal
+    LoadbalancerName: $lbName,
+    SecurityGroup: ($sg // "")
   } |
-  [.ServicePermissionId, .Principal] | @csv
+  [.LoadbalancerName, .SecurityGroup] | @csv
 )
