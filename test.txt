@@ -63,7 +63,7 @@ try {
         # ---
         try {
             # 対応するjqファイルと出力先のパスを構築
-            $jqQueryFile = Join-Path -Path @($jqQueryDir, $subDirName) -ChildPath "$($baseName).jq"
+            $jqQueryFile = Join-Path -Path @($jqQueryDir, $subDirName) -ChildPath "$($subDirName).jq"
             $outputSubDir = Join-Path -Path $outputDir -ChildPath $subDirName
             $csvOutputFile = Join-Path -Path $outputSubDir -ChildPath "$($baseName).csv"
 
@@ -78,12 +78,30 @@ try {
                 New-Item -Path $outputSubDir -ItemType Directory | Out-Null
             }
 
-            # jqコマンドを実行
-            & $jqPath -r -f $jqQueryFile $jsonFile.FullName | Set-Content -Path $csvOutputFile -Encoding utf8
+            # jqコマンドの引数を配列として定義
+            $jqArgs = @(
+                '-r',
+                '-f',
+                $jqQueryFile,
+                $jsonFile.FullName
+            )
+
+            # jqコマンドを実行し、標準出力と標準エラー出力を$jqOutputに格納
+            $jqOutput = & $jqPath $jqArgs 2>&1
+
+            # jq.exeの終了コードを確認
+            if ($LASTEXITCODE -ne 0) {
+                # 0以外はエラーとみなし、jqの出力をエラーメッセージとしてスローする
+                throw "jq.exeがエラーを返しました: $jqOutput"
+            }
+
+            # 成功した場合のみ、結果をファイルに書き込む
+            $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
             
             Write-Host "[2/2] CSVファイルを作成しました: $csvOutputFile"
         }
         catch {
+            # throwされたエラーメッセージをキャッチして表示
             Write-Warning "[2/2] JQ処理中にエラーが発生しました: $($_.Exception.Message)"
             continue
         }
