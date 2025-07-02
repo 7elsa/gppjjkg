@@ -1,9 +1,115 @@
-# PowerShellのコマンドを使わず、単純な文字列連結のみでパスを作成します
-$jqQueryDir = "C:\Users\123456\scripts\jq_query"
-$subDirName = "AAA"
-$baseName   = "filename"
+# =============================================================================
+# 初期設定
+# =============================================================================
+try {
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    $scriptRoot = $PSScriptRoot
+    $jqPath = $scriptRoot + "\jq.exe"
+    $inputDir = $scriptRoot + "\input_json"
+    $jqQueryDir = $scriptRoot + "\jq_query"
+    $outputDir = $scriptRoot + "\output_csv"
 
-$finalPath = $jqQueryDir + "\" + $subDirName + "\" + $baseName + ".jq"
+    # 必須ファイルの存在チェック
+    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
+    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
+    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
 
-Write-Host "--- 生成されたパス ---"
-Write-Host $finalPath
+    # 出力フォルダがなければ作成
+    if (-not (Test-Path -Path $outputDir -PathType Container)) {
+        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
+        New-Item -Path $outputDir -ItemType Directory | Out-Null
+    }
+
+    # =============================================================================
+    # メイン処理
+    # =============================================================================
+
+    # input_jsonフォルダ配下のすべてのjsonファイルを再帰的に取得
+    $jsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
+
+    if ($null -eq $jsonFiles) {
+        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
+        exit
+    }
+
+    # BOMなしUTF-8のエンコーディング設定
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    # 各JSONファイルに対して処理を実行
+    foreach ($jsonFile in $jsonFiles) {
+        
+        Write-Host "--------------------------------------------------"
+        Write-Host "処理開始: $($jsonFile.FullName)"
+
+        # ファイル名とサブフォルダ名を取得
+        $baseName = $jsonFile.BaseName
+        $subDirName = $jsonFile.Directory.Name
+
+        # ---
+        # 1. インプットファイルをBOMなしUTF-8に変換して上書き
+        # ---
+        try {
+            $content = Get-Content -Path $jsonFile.FullName -Raw
+            [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
+            Write-Host "[1/2] BOMなしUTF-8へ変換完了"
+        }
+        catch {
+            Write-Warning "[1/2] UTF-8変換中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+
+        # ---
+        # 2. jq.exeを用いてCSVに変換し、指定フォルダに保存
+        # ---
+        try {
+            # 対応するjqファイルと出力先のパスを構築 (単純な文字列連結を使用)
+            $jqQueryFile = $jqQueryDir + "\" + $subDirName + "\" + $baseName + ".jq"
+            $outputSubDir = $outputDir + "\" + $subDirName
+            $csvOutputFile = $outputSubDir + "\" + $baseName + ".csv"
+
+            # 対応するjqファイルが存在するかチェック
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
+                Write-Warning "[2/2] 対応するJQファイルが見つかりません。スキップします: $jqQueryFile"
+                continue
+            }
+
+            # 出力先のサブフォルダがなければ作成
+            if (-not (Test-Path -Path $outputSubDir -PathType Container)) {
+                New-Item -Path $outputSubDir -ItemType Directory | Out-Null
+            }
+
+            # jqコマンドの引数を配列として定義
+            $jqArgs = @(
+                '-r',
+                '-f',
+                $jqQueryFile,
+                $jsonFile.FullName
+            )
+
+            # jqコマンドを実行し、標準出力と標準エラー出力を$jqOutputに格納
+            $jqOutput = & $jqPath $jqArgs 2>&1
+
+            # jq.exeの終了コードを確認
+            if ($LASTEXITCODE -ne 0) {
+                # 0以外はエラーとみなし、jqの出力をエラーメッセージとしてスローする
+                throw "jq.exeがエラーを返しました: $jqOutput"
+            }
+
+            # 成功した場合のみ、結果をファイルに書き込む
+            $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
+            
+            Write-Host "[2/2] CSVファイルを作成しました: $csvOutputFile"
+        }
+        catch {
+            # throwされたエラーメッセージをキャッチして表示
+            Write-Warning "[2/2] JQ処理中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+    }
+    Write-Host "--------------------------------------------------"
+    Write-Host "全ての処理が完了しました。"
+}
+catch {
+    # スクリプト全体で発生したエラーをキャッチ
+    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
+}
