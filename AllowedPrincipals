@@ -1,0 +1,9 @@
+(["ServicePermissionId", "Principal"] | @csv),
+(
+  .AllowedPrincipals[] |
+  {
+    ServicePermissionId: .ServicePermissionId,
+    Principal: .Principal
+  } |
+  [.ServicePermissionId, .Principal] | @csv
+)
