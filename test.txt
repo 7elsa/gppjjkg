@@ -1,63 +1,10 @@
-# --- 設定 ---
-# ご提示のパスを直接指定します
-$inputFile  = "C:\Users\123456\scripts\input_file\AAA\filename.json"
-$jqQuery    = "C:\Users\123456\scripts\jq_query\AAA\filename.jq"
-$outputFile = "C:\Users\123456\scripts\output_csv\AAA\filename.csv"
+# 変数を仮設定
+$jqQueryDir = "C:\Users\123456\scripts\jq_query"
+$subDirName = "AAA"
+$baseName   = "filename"
 
-# 実行ファイルと出力先フォルダのパス
-$jqExe      = "C:\Users\123456\scripts\jq.exe"
-$outputDir  = "C:\Users\123456\scripts\output_csv\AAA"
-# --- 設定ここまで ---
+# ご指摘のコマンド
+$jqQueryFile = Join-Path -Path @($jqQueryDir, $subDirName) -ChildPath "$($baseName).jq"
 
-
-Write-Host "処理を開始します..."
-Write-Host "入力JSON: $inputFile"
-Write-Host "JQクエリ: $jqQuery"
-Write-Host "出力CSV:  $outputFile"
-
-try {
-    # --- 1. BOMなしUTF-8へ変換 ---
-    Write-Host "[1/2] UTF-8変換処理を開始..."
-    if (-not (Test-Path -Path $inputFile)) { throw "入力ファイルが見つかりません: $inputFile" }
-    
-    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-    $content = Get-Content -Path $inputFile -Raw
-    [System.IO.File]::WriteAllText($inputFile, $content, $utf8WithoutBom)
-    Write-Host "[1/2] UTF-8変換完了"
-
-    # --- 2. JQでCSVへ変換 ---
-    Write-Host "[2/2] JQ処理を開始..."
-    if (-not (Test-Path -Path $jqQuery)) { throw "JQクエリファイルが見つかりません: $jqQuery" }
-
-    # 出力先フォルダがなければ作成
-    if (-not (Test-Path -Path $outputDir)) {
-        New-Item -Path $outputDir -ItemType Directory | Out-Null
-    }
-
-    # jqコマンドの引数を定義
-    $jqArgs = @(
-        '-r',
-        '-f',
-        $jqQuery,
-        $inputFile
-    )
-
-    # jqコマンドを実行
-    $jqOutput = & $jqExe $jqArgs 2>&1
-
-    # jq.exeの終了コードを確認
-    if ($LASTEXITCODE -ne 0) {
-        throw "jq.exeがエラーを返しました: $jqOutput"
-    }
-
-    # 成功した場合のみ、結果をファイルに書き込む
-    $jqOutput | Set-Content -Path $outputFile -Encoding utf8
-    
-    Write-Host "[2/2] CSVファイルを作成しました。"
-    Write-Host "--------------------------------------------------"
-    Write-Host "テストが正常に完了しました。"
-
-}
-catch {
-    Write-Error "処理中にエラーが発生しました: $($_.Exception.Message)"
-}
+# 生成されたパスを画面に表示
+Write-Host $jqQueryFile
