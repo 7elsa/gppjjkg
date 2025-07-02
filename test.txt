@@ -1,1 +1,98 @@
 
+# =============================================================================
+# 初期設定
+# =============================================================================
+try {
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    $scriptRoot = $PSScriptRoot
+    $jqPath = Join-Path $scriptRoot -ChildPath "jq.exe"
+    $inputDir = Join-Path $scriptRoot -ChildPath "input_json"
+    $jqQueryDir = Join-Path $scriptRoot -ChildPath "jq_query"
+    $outputDir = Join-Path $scriptRoot -ChildPath "output_csv"
+
+    # 必須ファイルの存在チェック
+    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
+    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
+    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
+
+    # 出力フォルダがなければ作成
+    if (-not (Test-Path -Path $outputDir -PathType Container)) {
+        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
+        New-Item -Path $outputDir -ItemType Directory | Out-Null
+    }
+
+    # =============================================================================
+    # メイン処理
+    # =============================================================================
+
+    # input_jsonフォルダ配下のすべてのjsonファイルを再帰的に取得
+    $jsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
+
+    if ($null -eq $jsonFiles) {
+        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
+        exit
+    }
+
+    # BOMなしUTF-8のエンコーディング設定
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    # 各JSONファイルに対して処理を実行
+    foreach ($jsonFile in $jsonFiles) {
+        
+        Write-Host "--------------------------------------------------"
+        Write-Host "処理開始: $($jsonFile.FullName)"
+
+        # ファイル名とサブフォルダ名を取得
+        $baseName = $jsonFile.BaseName
+        $subDirName = $jsonFile.Directory.Name
+
+        # ---
+        # 1. インプットファイルをBOMなしUTF-8に変換して上書き
+        # ---
+        try {
+            $content = Get-Content -Path $jsonFile.FullName -Raw
+            [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
+            Write-Host "[1/2] BOMなしUTF-8へ変換完了"
+        }
+        catch {
+            Write-Warning "[1/2] UTF-8変換中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+
+        # ---
+        # 2. jq.exeを用いてCSVに変換し、指定フォルダに保存
+        # ---
+        try {
+            # 対応するjqファイルと出力先のパスを構築
+            $jqQueryFile = Join-Path -Path $jqQueryDir -ChildPath $subDirName -ChildPath "$($baseName).jq"
+            $outputSubDir = Join-Path -Path $outputDir -ChildPath $subDirName
+            $csvOutputFile = Join-Path -Path $outputSubDir -ChildPath "$($baseName).csv"
+
+            # 対応するjqファイルが存在するかチェック
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
+                Write-Warning "[2/2] 対応するJQファイルが見つかりません。スキップします: $jqQueryFile"
+                continue
+            }
+
+            # 出力先のサブフォルダがなければ作成
+            if (-not (Test-Path -Path $outputSubDir -PathType Container)) {
+                New-Item -Path $outputSubDir -ItemType Directory | Out-Null
+            }
+
+            # jqコマンドを実行
+            & $jqPath -r -f $jqQueryFile $jsonFile.FullName | Set-Content -Path $csvOutputFile -Encoding utf8
+            
+            Write-Host "[2/2] CSVファイルを作成しました: $csvOutputFile"
+        }
+        catch {
+            Write-Warning "[2/2] JQ処理中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+    }
+    Write-Host "--------------------------------------------------"
+    Write-Host "全ての処理が完了しました。"
+}
+catch {
+    # スクリプト全体で発生したエラーをキャッチ
+    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
+}
