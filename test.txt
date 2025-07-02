@@ -1,28 +1,32 @@
 # スクリプトが置かれているディレクトリのパスを取得
 $scriptDirectory = $PSScriptRoot
 
-# 読み込むCSVファイルの相対パスを指定
-$csvRelativePath = "abc\aaa.csv"
-# CSVファイルのフルパスを構築
-$csvFilePath = Join-Path -Path $scriptDirectory -ChildPath $csvRelativePath
+# 読み込むJSONファイルの相対パスを指定 (ファイル名を変更してください)
+$sourceJsonRelativePath = "abc\input.json"
+$sourceJsonPath = Join-Path -Path $scriptDirectory -ChildPath $sourceJsonRelativePath
 
-# 出力するJSONファイルの名前を指定
-$jsonFileName = "output.json"
-# JSONファイルのフルパスを構築
-$jsonFilePath = Join-Path -Path $scriptDirectory -ChildPath $jsonFileName
+# 出力するJSONファイルのパスを指定 (ファイル名を変更してください)
+$outputJsonPath = Join-Path -Path $scriptDirectory -ChildPath "output_utf8.json"
 
-# CSVファイルを読み込み、JSONに変換してUTF-8でファイルに出力
 try {
-    # CSVファイルが存在するかチェック
-    if (-not (Test-Path -Path $csvFilePath -PathType Leaf)) {
-        # throwで意図的にエラーを発生させ、catchブロックに処理を移す
-        throw "指定されたCSVファイルが見つかりません: $csvFilePath"
+    # ファイルが存在するかチェック
+    if (-not (Test-Path -Path $sourceJsonPath -PathType Leaf)) {
+        throw "指定されたJSONファイルが見つかりません: $sourceJsonPath"
     }
 
-    Import-Csv -Path $csvFilePath | ConvertTo-Json | Out-File -FilePath $jsonFilePath -Encoding UTF8
-    Write-Host "✅ 変換が完了しました。'$jsonFilePath' に保存されました。"
+    # JSONファイルをテキストとして読み込む
+    # -Rawを指定すると、ファイル全体を1つの文字列として高速に読み込みます
+    $fileContent = Get-Content -Path $sourceJsonPath -Raw
+
+    # BOMなしのUTF-8エンコーディング設定を作成
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    # .NETのメソッドを使って新しいファイルに書き込む
+    [System.IO.File]::WriteAllText($outputJsonPath, $fileContent, $utf8WithoutBom)
+    
+    Write-Host "✅ 変換が完了しました。'$outputJsonPath' にUTF-8（BOMなし）で保存されました。"
 }
 catch {
-    # エラーメッセージを出力します。引用符が " であることを確認してください。
+    # エラーメッセージを出力します
     Write-Error "❌ 処理中にエラーが発生しました: $($_.Exception.Message)"
 }
