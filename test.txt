@@ -63,7 +63,7 @@ try {
         # ---
         try {
             # 対応するjqファイルと出力先のパスを構築
-            $jqQueryFile = Join-Path -Path @($jqQueryDir, $subDirName) -ChildPath "$($subDirName).jq"
+            $jqQueryFile = Join-Path -Path @($jqQueryDir, $subDirName) -ChildPath "$($baseName).jq"
             $outputSubDir = Join-Path -Path $outputDir -ChildPath $subDirName
             $csvOutputFile = Join-Path -Path $outputSubDir -ChildPath "$($baseName).csv"
 
