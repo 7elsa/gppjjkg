@@ -3,8 +3,9 @@ $jqQueryDir = "C:\Users\123456\scripts\jq_query"
 $subDirName = "AAA"
 $baseName   = "filename"
 
-# ご指摘のコマンド
-$jqQueryFile = Join-Path -Path @($jqQueryDir, $subDirName) -ChildPath "$($baseName).jq"
+# 1段階ずつパスを結合する、より安全な方法
+$tempPath = Join-Path -Path $jqQueryDir -ChildPath $subDirName
+$jqQueryFile = Join-Path -Path $tempPath -ChildPath "$($baseName).jq"
 
 # 生成されたパスを画面に表示
 Write-Host $jqQueryFile
