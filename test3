@@ -1,0 +1,197 @@
+# =============================================================================
+# スクリプトのパラメータ定義 (要件3対応)
+# =============================================================================
+param(
+    [Parameter(Mandatory=$false, HelpMessage="処理対象のJSONファイルまたはフォルダのパスを指定します。未指定の場合はinput_jsonフォルダ全体を処理します。")]
+    [string]$InputPath
+)
+
+# =============================================================================
+# 初期設定
+# =============================================================================
+try {
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    $scriptRoot = $PSScriptRoot
+    $jqPath = Join-Path $scriptRoot "jq.exe"
+    $inputDir = Join-Path $scriptRoot "input_json"
+    $jqQueryDir = Join-Path $scriptRoot "jq_query"
+    $outputDir = Join-Path $scriptRoot "output_csv"
+
+    # 必須ファイルの存在チェック
+    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
+    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
+    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
+
+    # 出力フォルダがなければ作成
+    if (-not (Test-Path -Path $outputDir -PathType Container)) {
+        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
+        New-Item -Path $outputDir -ItemType Directory | Out-Null
+    }
+
+    # BOMなしUTF-8のエンコーディング設定
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    # =============================================================================
+    # 設定 (要件1, 2対応)
+    # =============================================================================
+
+    # 要件1: JSONの最初のキーと使用するjqクエリのマッピング
+    # キー名 = "使用するjqファイル名"
+    $jqQueryMap = @{
+        "SecurityGroupRules" = "aws-security-group-rules.jq"
+        "Users"              = "aws-iam-users.jq"
+        "Volumes"            = "aws-ec2-volumes.jq"
+        # 他のキーとクエリのマッピングをここに追加
+    }
+
+    # 要件2: マージ処理の定義
+    $mergeTasks = @(
+        @{
+            OutputCsv  = "merged-BBB-CCC.csv"
+            InputFiles = @("BBB.json", "CCC.json") # input_jsonからの相対パス
+            JqQuery    = "merge-BBB-CCC.jq"
+        }
+        # 他のマージタスクもここに追加
+    )
+
+    # =============================================================================
+    # メイン処理
+    # =============================================================================
+
+    # ---
+    # 1. 処理対象のJSONファイルリストを取得 (要件3対応)
+    # ---
+    $targetFiles = @()
+    if ([string]::IsNullOrEmpty($InputPath)) {
+        # 引数がなければinput_jsonフォルダ内の全jsonファイルを対象
+        Write-Host "INFO: 処理対象の指定がないため、'$($inputDir)' 内のすべてのJSONファイルを処理します。"
+        $targetFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
+    } elseif (Test-Path -Path $InputPath) {
+        if ((Get-Item $InputPath) -is [System.IO.DirectoryInfo]) {
+            # フォルダが指定された場合
+            Write-Host "INFO: 指定されたフォルダ内のJSONファイルを処理します: $InputPath"
+            $targetFiles = Get-ChildItem -Path $InputPath -Filter "*.json" -Recurse
+        } else {
+            # ファイルが指定された場合
+            Write-Host "INFO: 指定された単一のJSONファイルを処理します: $InputPath"
+            $targetFiles = Get-Item -Path $InputPath
+        }
+    } else {
+        throw "指定されたパスが見つかりません: $InputPath"
+    }
+
+    if ($null -eq $targetFiles) {
+        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
+        exit
+    }
+    
+    # 処理済みファイルを記録するリスト
+    $processedFiles = [System.Collections.Generic.List[string]]::new()
+
+
+    # ---
+    # 2. マージ処理 (要件2対応)
+    # ---
+    if ([string]::IsNullOrEmpty($InputPath)) { # マージ処理は全件実行時のみ（引数指定時はスキップ）
+        Write-Host "--------------------------------------------------"
+        Write-Host "マージ処理を開始します..."
+        foreach ($task in $mergeTasks) {
+            $inputJsonPaths = @()
+            $allFilesFound = $true
+            
+            # マージ対象ファイルのフルパスを取得し、存在確認
+            foreach ($file in $task.InputFiles) {
+                # input_jsonフォルダ内からファイルを再帰的に検索
+                $found = Get-ChildItem -Path $inputDir -Filter $file -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($found) {
+                    $inputJsonPaths += $found.FullName
+                    $processedFiles.Add($found.FullName) # 個別処理から除外するために記録
+                } else {
+                    Write-Warning "マージ対象ファイルが見つかりません: $file"
+                    $allFilesFound = $false
+                    break
+                }
+            }
+
+            if (-not $allFilesFound) { continue }
+
+            Write-Host "以下のファイルをマージして'$($task.OutputCsv)'を作成します: $($task.InputFiles -join ', ')"
+            $jqQueryFile = Join-Path $jqQueryDir $task.JqQuery
+            $csvOutputFile = Join-Path $outputDir $task.OutputCsv
+            
+            # (省略) BOMなしUTF8変換処理
+            $inputJsonPaths | ForEach-Object {
+                 $content = Get-Content -Path $_ -Raw
+                 [System.IO.File]::WriteAllText($_, $content, $utf8WithoutBom)
+            }
+
+            try {
+                 # jqコマンド実行 (-s オプションで入力を配列として扱う)
+                $jqArgs = @('-s', '-r', '-f', $jqQueryFile) + $inputJsonPaths
+                & $jqPath $jqArgs | Set-Content -Path $csvOutputFile -Encoding utf8
+                Write-Host "マージCSVファイルを作成しました: $csvOutputFile"
+            } catch {
+                Write-Warning "マージ処理中にエラーが発生しました: $($_.Exception.Message)"
+            }
+        }
+    }
+
+
+    # ---
+    # 3. 個別ファイル処理
+    # ---
+    Write-Host "--------------------------------------------------"
+    Write-Host "個別ファイルの処理を開始します..."
+    foreach ($jsonFile in $targetFiles) {
+        if ($processedFiles.Contains($jsonFile.FullName)) {
+            Write-Host "INFO: マージ処理済みのためスキップします: $($jsonFile.Name)"
+            continue
+        }
+
+        Write-Host "--- 処理開始: $($jsonFile.FullName) ---"
+        try {
+            # BOMなしUTF-8へ変換
+            $content = Get-Content -Path $jsonFile.FullName -Raw
+            [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
+            Write-Host "[1/2] BOMなしUTF-8へ変換完了"
+
+            # JSONの内容から最初のキーを取得 (要件1対応)
+            # -Depth 1 でネストが深い巨大ファイルのパースを高速化
+            $firstKey = ($content | ConvertFrom-Json -Depth 1 -ErrorAction SilentlyContinue).PSObject.Properties.Name[0]
+
+            if ($null -eq $firstKey -or -not $jqQueryMap.ContainsKey($firstKey)) {
+                throw "対応するJQクエリが見つかりません。JSONの最初のキーを確認してください: (キー: '$firstKey')"
+            }
+
+            $jqQueryFileName = $jqQueryMap[$firstKey]
+            $jqQueryFile = Join-Path $jqQueryDir $jqQueryFileName
+            
+            if (-not (Test-Path $jqQueryFile)) {
+                throw "JQファイルが見つかりません: $jqQueryFile"
+            }
+
+            # 出力ファイルパスの生成
+            $outputSubDir = Join-Path $outputDir $jsonFile.Directory.Name.Replace($inputDir, "")
+            if (-not (Test-Path $outputSubDir)) {
+                 New-Item -Path $outputSubDir -ItemType Directory | Out-Null
+            }
+            $csvOutputFile = Join-Path $outputSubDir ($jsonFile.BaseName + ".csv")
+
+            # jqコマンドを実行してCSVに変換
+            $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
+            & $jqPath $jqArgs | Set-Content -Path $csvOutputFile -Encoding utf8
+            Write-Host "[2/2] CSVファイルを作成しました: $csvOutputFile"
+
+        } catch {
+            Write-Warning "エラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+    }
+
+    Write-Host "--------------------------------------------------"
+    Write-Host "全ての処理が完了しました。"
+}
+catch {
+    # スクリプト全体で発生した致命的なエラーをキャッチ
+    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
+}
