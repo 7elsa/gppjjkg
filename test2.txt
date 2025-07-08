@@ -1,56 +1,4 @@
-# =============================================================================
-# 初期設定
-# =============================================================================
-try {
-    # スクリプトが置かれているディレクトリを基準に各パスを設定
-    $scriptRoot = $PSScriptRoot
-    $jqPath = $scriptRoot + "\jq.exe"
-    $inputDir = $scriptRoot + "\input_json"
-    $jqQueryDir = $scriptRoot + "\jq_query"
-    $outputDir = $scriptRoot + "\output_csv"
-
-    # 必須ファイルの存在チェック
-    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
-    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
-    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
-
-    # 出力フォルダがなければ作成
-    if (-not (Test-Path -Path $outputDir -PathType Container)) {
-        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
-        New-Item -Path $outputDir -ItemType Directory | Out-Null
-    }
-
-    # =============================================================================
-    # ★★★ 設定項目 ★★★
-    # JSONのキーと、それに対応する「jqファイル」および「出力ファイル」のマッピング
-    # =============================================================================
-    $fileMapping = @{
-        # "JSONの最初のキー" = @{ JqFile = "使用するjqファイル名"; OutputFileBase = "出力ファイル名のベース" }
-        "Reservations"           = @{ JqFile = "instances.jq";                OutputFileBase = "instances" }
-        "LoadBalancers"          = @{ JqFile = "LoadBalancers.jq";            OutputFileBase = "LoadBalancers" }
-        "SecurityGroups"         = @{ JqFile = "SecurityGroups.jq";           OutputFileBase = "SecurityGroups" }
-        "VpcEndpointConnections" = @{ JqFile = "VpcEndpointConnections.jq";   OutputFileBase = "VpcEndpointConnections" }
-        "AllowedPrincipals"      = @{ JqFile = "AllowedPrincipals.jq";        OutputFileBase = "AllowedPrincipals" }
-        "Directories"            = @{ JqFile = "Directories.jq";              OutputFileBase = "Directories" }
-        "Workspaces"             = @{ JqFile = "Workspaces.jq";               OutputFileBase = "Workspaces" }
-        # 他のキーとファイルの対応をここに追加
-    }
-
-    # 出力ファイル名に使用する日付文字列
-    $dateString = Get-Date -Format "yyyyMMdd"
-
-    # =============================================================================
-    # メイン処理
-    # =============================================================================
-    $jsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
-
-    if ($null -eq $jsonFiles) {
-        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
-        exit
-    }
-
-    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-
+# 差し替え対象の開始位置
     foreach ($jsonFile in $jsonFiles) {
         Write-Host "--------------------------------------------------"
         Write-Host "処理開始: $($jsonFile.FullName)"
@@ -80,13 +28,15 @@ try {
             # input_jsonからの相対パスを取得
             $relativeSubDir = $jsonFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
 
-            # 使用するjqファイルのフルパスを構築
-            $jqQueryFile = $jqQueryDir + "\" + $relativeSubDir + "\" + $jqFileName
-            
-            # 出力するCSVファイルのフルパスを構築
+            # ★★★★★ 変更点：パスの構築方法を修正 ★★★★★
+            # より安全な「展開可能な文字列」形式でパスを構築します。
+
+            $outputSubDir = "$outputDir\$relativeSubDir"
+            $jqQueryFile = "$outputSubDir".Replace($outputDir, $jqQueryDir) + "\$jqFileName"
             $csvFileName = "${dateString}_${outputFileBaseName}.csv"
-            $outputSubDir = $outputDir + "\" + $relativeSubDir
-            $csvOutputFile = $outputSubDir + "\" + $csvFileName
+            $csvOutputFile = "$outputSubDir\$csvFileName"
+            
+            # ★★★★★ 変更ここまで ★★★★★
 
             Write-Host "[2/3] JQクエリ '$jqQueryFile' を使用し、'$csvOutputFile' に出力します。"
 
@@ -120,9 +70,4 @@ try {
             continue # エラーが発生しても次のファイルの処理へ
         }
     }
-    Write-Host "--------------------------------------------------"
-    Write-Host "全ての処理が完了しました。"
-}
-catch {
-    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
-}
+    # 差し替え対象の終了位置
