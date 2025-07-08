@@ -2,7 +2,7 @@
 # 初期設定
 # =============================================================================
 try {
-    # スクリプトが置かれているディレクトリを基準に各パスを設定 (Join-Pathで堅牢化)
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
     $scriptRoot = $PSScriptRoot
     $jqPath = Join-Path $scriptRoot "jq.exe"
     $inputDir = Join-Path $scriptRoot "input_json"
@@ -43,6 +43,10 @@ try {
 
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 
+    # ★★★ 修正箇所 ★★★
+    # jq.exe の情報をスクリプト開始時に一度だけ取得しておく
+    $jqCmd = Get-Command $jqPath -ErrorAction Stop
+
     foreach ($jsonFile in $jsonFiles) {
         
         Write-Host "--------------------------------------------------"
@@ -59,7 +63,8 @@ try {
             # ---
             # 2. jq.exeを用いて、使用するJQファイルを動的に決定
             # ---
-            $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
+            # 取得済みのコマンド情報を使ってjqを実行
+            $firstKey = (& $jqCmd.Source -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
 
             if ([string]::IsNullOrEmpty($firstKey) -or -not $jqQueryMap.ContainsKey($firstKey)) {
                 throw "JSONのキー'$firstKey'に対応するJQファイルがマッピングに見つかりません。スクリプト内の`$jqQueryMap`を確認してください。"
@@ -84,35 +89,10 @@ try {
                 New-Item -Path $outputSubDir -ItemType Directory | Out-Null
             }
 
-            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-            # !! 診断コード !!
-            # 次の実行でエラーが発生するため、実行直前の変数の状態を確認します。
-            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-            Write-Host ""
-            Write-Host "--- 診断情報ここから ---" -ForegroundColor Yellow
-            Write-Host "jq.exeのパス (\$jqPath): $jqPath"
-            Write-Host "JSONファイルのパス (\$jsonFile.FullName): $($jsonFile.FullName)"
-            Write-Host "JQクエリファイルのパス (\$jqQueryFile): $jqQueryFile"
-
-            # PowerShellが jq.exe をどのように認識しているか確認
-            try {
-                $jqCmdInfo = Get-Command $jqPath -ErrorAction Stop
-                Write-Host "Get-Command の結果 (種類): $($jqCmdInfo.CommandType)"
-                Write-Host "Get-Command の結果 (パス): $($jqCmdInfo.Source)"
-            } catch {
-                Write-Warning "Get-Command '$jqPath' でエラーが発生しました: $($_.Exception.Message)"
-            }
-
-            # 実行引数の内容を個別に確認
             $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
-            Write-Host "実行引数 (\$jqArgs) の内容:"
-            $jqArgs | ForEach-Object { Write-Host "  - '$_'" }
-            Write-Host "--- 診断情報ここまで ---" -ForegroundColor Yellow
-            Write-Host ""
-            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-
-            # 実際のコマンド実行
-            $jqOutput = & $jqPath $jqArgs 2>&1
+            
+            # 取得済みのコマンド情報($jqCmd)を使って、より確実に実行
+            $jqOutput = & $jqCmd.Source $jqArgs 2>&1
 
             if ($LASTEXITCODE -ne 0) {
                 throw "jq.exeがエラーを返しました: $jqOutput"
