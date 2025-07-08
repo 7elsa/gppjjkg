@@ -1,11 +1,157 @@
-# CSVヘッダーを出力
-(["ServicePermissionId", "Principal"] | @csv),
-(
-  # 変更点：一番外側の配列を展開するため、先頭に .[] を追加
-  .[].AllowedPrincipals[] |
-  {
-    ServicePermissionId: .ServicePermissionId,
-    Principal: .Principal
-  } |
-  [.ServicePermissionId, .Principal] | @csv
-)
+# =============================================================================
+# 初期設定
+# =============================================================================
+try {
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    $scriptRoot = $PSScriptRoot
+    $jqPath = $scriptRoot + "\jq.exe"
+    $inputDir = $scriptRoot + "\input_json"
+    $jqQueryDir = $scriptRoot + "\jq_query"
+    $outputDir = $scriptRoot + "\output_csv"
+
+    # 必須ファイルの存在チェック
+    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
+    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
+    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
+
+    # 出力フォルダがなければ作成
+    if (-not (Test-Path -Path $outputDir -PathType Container)) {
+        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
+        New-Item -Path $outputDir -ItemType Directory | Out-Null
+    }
+
+    # =============================================================================
+    # ★★★ 設定項目 ★★★
+    # =============================================================================
+    $fileMapping = @{
+        "Reservations"           = @{ JqFile = "instances.jq";                OutputFileBase = "instances" }
+        "LoadBalancers"          = @{ JqFile = "LoadBalancers.jq";            OutputFileBase = "LoadBalancers" }
+        "SecurityGroups"         = @{ JqFile = "SecurityGroups.jq";           OutputFileBase = "SecurityGroups" }
+        "VpcEndpointConnections" = @{ JqFile = "VpcEndpointConnections.jq";   OutputFileBase = "VpcEndpointConnections" }
+        "AllowedPrincipals"      = @{ JqFile = "AllowedPrincipals.jq";        OutputFileBase = "AllowedPrincipals" }
+        "Directories"            = @{ JqFile = "Directories.jq";              OutputFileBase = "Directories" }
+        "Workspaces"             = @{ JqFile = "Workspaces.jq";               OutputFileBase = "Workspaces" }
+    }
+    $dateString = Get-Date -Format "yyyyMMdd"
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    # =============================================================================
+    # メイン処理
+    # =============================================================================
+    $allJsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
+
+    if ($null -eq $allJsonFiles) {
+        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
+        exit
+    }
+
+    # 処理済みのファイルを記録するリスト
+    $processedFiles = [System.Collections.Generic.List[string]]::new()
+
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    # ★★★ 先に "AllowedPrincipals" のマージ処理のみを実行 ★★★
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    
+    # 1. マージ対象のファイルを探す
+    $principalsFiles = @()
+    foreach ($jsonFile in $allJsonFiles) {
+        # BOM変換を先に行う
+        $content = Get-Content -Path $jsonFile.FullName -Raw -Encoding utf8
+        [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
+
+        $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
+        if ($firstKey -eq "AllowedPrincipals") {
+            $principalsFiles += $jsonFile
+        }
+    }
+
+    # 2. マージ対象があった場合のみ、結合処理を実行
+    if ($principalsFiles.Count -gt 0) {
+        Write-Host "--------------------------------------------------"
+        Write-Host "マージ処理を開始: AllowedPrincipals (対象ファイル数: $($principalsFiles.Count))"
+        try {
+            # マッピング定義とパス情報を取得
+            $mappingInfo = $fileMapping["AllowedPrincipals"]
+            $firstFile = $principalsFiles[0]
+            $relativeSubDir = $firstFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
+            $jqQueryFile = "$jqQueryDir\$relativeSubDir\$($mappingInfo.JqFile)"
+            $csvFileName = "${dateString}_$($mappingInfo.OutputFileBase).csv"
+            $outputSubDir = "$outputDir\$relativeSubDir"
+            $csvOutputFile = "$outputSubDir\$csvFileName"
+
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) { throw "JQクエリファイルが見つかりません: $jqQueryFile" }
+            if (-not (Test-Path -Path $outputSubDir)) { New-Item -Path $outputSubDir -ItemType Directory | Out-Null }
+
+            # 全ファイルのパスを取得し、-s オプション付きでjqを実行
+            $filePathsToMerge = $principalsFiles | ForEach-Object { $_.FullName }
+            $jqArgs = @('-s', '-r', '-f', $jqQueryFile) + $filePathsToMerge
+            
+            $jqOutput = & $jqPath $jqArgs 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "jq.exeがエラーを返しました: $jqOutput" }
+
+            $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
+            Write-Host "マージCSVファイルを作成しました: $csvOutputFile"
+
+            # 処理済みリストにファイルを追加
+            $principalsFiles | ForEach-Object { $processedFiles.Add($_.FullName) }
+
+        } catch {
+            Write-Warning "AllowedPrincipalsのマージ処理中にエラーが発生しました: $($_.Exception.Message)"
+        }
+    }
+
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    # ★★★ 通常の個別ファイル処理 (マージ済みファイルはスキップ) ★★★
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    foreach ($jsonFile in $allJsonFiles) {
+        # 既にマージ処理済みの場合はスキップ
+        if ($processedFiles.Contains($jsonFile.FullName)) {
+            continue
+        }
+
+        Write-Host "--------------------------------------------------"
+        Write-Host "個別処理を開始: $($jsonFile.FullName)"
+        
+        # BOM変換は実施済みのため、ここでは行わない
+
+        try {
+            # --- JSONキーに基づき、使用するファイル名を決定 ---
+            $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
+
+            if (-not $fileMapping.ContainsKey($firstKey)) {
+                throw "JSONキー '$firstKey' に対応する定義がマッピングに見つかりません。"
+            }
+
+            $mappingInfo = $fileMapping[$firstKey]
+            $jqFileName = $mappingInfo.JqFile
+            $outputFileBaseName = $mappingInfo.OutputFileBase
+            $relativeSubDir = $jsonFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
+            $jqQueryFile = "$jqQueryDir\$relativeSubDir\$jqFileName"
+            $csvFileName = "${dateString}_${outputFileBaseName}.csv"
+            $outputSubDir = "$outputDir\$relativeSubDir"
+            $csvOutputFile = "$outputSubDir\$csvFileName"
+
+            Write-Host "JQクエリ '$jqQueryFile' を使用し、'$csvOutputFile' に出力します。"
+
+            # --- jqでCSVに変換し、ファイルに保存 ---
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) { throw "JQクエリファイルが見つかりません: $jqQueryFile" }
+            if (-not (Test-Path -Path $outputSubDir)) { New-Item -Path $outputSubDir -ItemType Directory | Out-Null }
+
+            $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
+            $jqOutput = & $jqPath $jqArgs 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "jq.exeがエラーを返しました: $jqOutput" }
+
+            $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
+            Write-Host "CSVファイルの作成が完了しました。"
+        }
+        catch {
+            Write-Warning "エラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+    }
+    Write-Host "--------------------------------------------------"
+    Write-Host "全ての処理が完了しました。"
+}
+catch {
+    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
+}
