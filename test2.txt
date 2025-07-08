@@ -38,7 +38,7 @@ try {
     # 要件1: JSONの最初のキーと使用するjqクエリのマッピング
     # キー名 = "使用するjqファイル名"
     $jqQueryMap = @{
-        "SecurityGroupRules" = "aws-security-group-rules.jq" # 例: scripts\jq_query\aaa\aws-security-group-rules.jq を探す
+        "SecurityGroupRules" = "aws-security-group-rules.jq"
         "Users"              = "aws-iam-users.jq"
         "Volumes"            = "aws-ec2-volumes.jq"
         # 他のキーとクエリのマッピングをここに追加
@@ -48,10 +48,9 @@ try {
     $mergeTasks = @(
         @{
             OutputCsv  = "merged-BBB-CCC.csv"
-            InputFiles = @("BBB.json", "CCC.json") # input_jsonからの相対パス
-            JqQuery    = "merge-BBB-CCC.jq"       # jq_queryのトップレベルにあると想定
+            InputFiles = @("BBB.json", "CCC.json")
+            JqQuery    = "merge-BBB-CCC.jq"
         }
-        # 他のマージタスクもここに追加
     )
 
     # =============================================================================
@@ -109,7 +108,6 @@ try {
             if (-not $allFilesFound) { continue }
 
             Write-Host "以下のファイルをマージして'$($task.OutputCsv)'を作成します: $($task.InputFiles -join ', ')"
-            # マージ用のjqファイルはjq_queryのトップレベルにあると想定
             $jqQueryFile = Join-Path $jqQueryDir $task.JqQuery
             $csvOutputFile = Join-Path $outputDir $task.OutputCsv
             
@@ -152,6 +150,8 @@ try {
             }
 
             # ★★★★★ 変更点 ★★★★★
+            # 曖昧なフォールバックロジックを廃止し、キーマッピングに基づく単一のロジックに修正
+            
             # input_jsonからの相対パスを取得
             $relativeSubDir = $jsonFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
             
@@ -159,15 +159,9 @@ try {
             $jqQueryFileName = $jqQueryMap[$firstKey]
             $jqQueryFile = Join-Path $jqQueryDir $relativeSubDir $jqQueryFileName
             
-            # もしサブフォルダにjqファイルがなければ、ファイル名自体をjqファイルとして探す（従来の動作）
-            if (-not (Test-Path $jqQueryFile)) {
-                $jqQueryFile_legacy = Join-Path $jqQueryDir $relativeSubDir ($jsonFile.BaseName + ".jq")
-                if(Test-Path $jqQueryFile_legacy) {
-                    $jqQueryFile = $jqQueryFile_legacy
-                    Write-Host "INFO: キーマッピングに優先して、ファイル名ベースのJQクエリを使用します: $jqQueryFile"
-                } else {
-                    throw "対応するJQファイルが見つかりません: $jqQueryFile または $jqQueryFile_legacy"
-                }
+            # jqファイルが指定されたパスに存在するか、厳密にチェック
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
+                throw "対応するJQファイルが見つかりません。次のパスを確認してください: $jqQueryFile"
             }
             # ★★★★★ 変更ここまで ★★★★★
 
