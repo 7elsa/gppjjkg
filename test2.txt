@@ -84,20 +84,40 @@ try {
                 New-Item -Path $outputSubDir -ItemType Directory | Out-Null
             }
 
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            # !! 診断コード !!
+            # 次の実行でエラーが発生するため、実行直前の変数の状態を確認します。
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            Write-Host ""
+            Write-Host "--- 診断情報ここから ---" -ForegroundColor Yellow
+            Write-Host "jq.exeのパス (\$jqPath): $jqPath"
+            Write-Host "JSONファイルのパス (\$jsonFile.FullName): $($jsonFile.FullName)"
+            Write-Host "JQクエリファイルのパス (\$jqQueryFile): $jqQueryFile"
+
+            # PowerShellが jq.exe をどのように認識しているか確認
+            try {
+                $jqCmdInfo = Get-Command $jqPath -ErrorAction Stop
+                Write-Host "Get-Command の結果 (種類): $($jqCmdInfo.CommandType)"
+                Write-Host "Get-Command の結果 (パス): $($jqCmdInfo.Source)"
+            } catch {
+                Write-Warning "Get-Command '$jqPath' でエラーが発生しました: $($_.Exception.Message)"
+            }
+
+            # 実行引数の内容を個別に確認
             $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
-            
-            # ★★★★★ 変更点：jqの実行とファイル出力を分離 ★★★★★
-            
-            # まずjqを実行し、標準出力と標準エラー出力を変数に格納
+            Write-Host "実行引数 (\$jqArgs) の内容:"
+            $jqArgs | ForEach-Object { Write-Host "  - '$_'" }
+            Write-Host "--- 診断情報ここまで ---" -ForegroundColor Yellow
+            Write-Host ""
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+            # 実際のコマンド実行
             $jqOutput = & $jqPath $jqArgs 2>&1
 
-            # jq.exeの終了コードを確認
             if ($LASTEXITCODE -ne 0) {
-                # 0以外はエラーとみなし、jqの出力をエラーメッセージとしてスローする
                 throw "jq.exeがエラーを返しました: $jqOutput"
             }
 
-            # 成功した場合のみ、結果をファイルに書き込む
             $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
             
             Write-Host "[3/3] CSVファイルを作成しました: $csvOutputFile"
