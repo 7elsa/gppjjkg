@@ -1,0 +1,156 @@
+# =============================================================================
+# 初期設定
+# =============================================================================
+try {
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    $scriptRoot = $PSScriptRoot
+    $jqPath = $scriptRoot + "\jq.exe"
+    $inputDir = $scriptRoot + "\input_json"
+    $jqQueryDir = $scriptRoot + "\jq_query"
+    $outputDir = $scriptRoot + "\output_csv"
+
+    # 必須ファイルの存在チェック
+    if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
+    if (-not (Test-Path -Path $inputDir -PathType Container)) { throw "入力フォルダが見つかりません: $inputDir" }
+    if (-not (Test-Path -Path $jqQueryDir -PathType Container)) { throw "JQクエリフォルダが見つかりません: $jqQueryDir" }
+
+    # 出力フォルダがなければ作成
+    if (-not (Test-Path -Path $outputDir -PathType Container)) {
+        Write-Host "INFO: 出力フォルダを作成します: $outputDir"
+        New-Item -Path $outputDir -ItemType Directory | Out-Null
+    }
+
+    # =============================================================================
+    # ★★★ 設定項目 ★★★
+    # JSONのキーと、それに対応する「jqファイル」および「出力ファイル」のマッピング
+    # =============================================================================
+    $fileMapping = @{
+        # "JSONの最初のキー" = @{ JqFile = "使用するjqファイル名"; OutputFileBase = "出力ファイル名のベース" }
+        "Reservations"           = @{ JqFile = "instances.jq";                OutputFileBase = "instances" }
+        "LoadBalancers"          = @{ JqFile = "LoadBalancers.jq";            OutputFileBase = "LoadBalancers" }
+        "SecurityGroups"         = @{ JqFile = "SecurityGroups.jq";           OutputFileBase = "SecurityGroups" }
+        "VpcEndpointConnections" = @{ JqFile = "VpcEndpointConnections.jq";   OutputFileBase = "VpcEndpointConnections" }
+        "AllowedPrincipals"      = @{ JqFile = "AllowedPrincipals.jq";        OutputFileBase = "AllowedPrincipals" } # マージ対象
+        "Directories"            = @{ JqFile = "Directories.jq";              OutputFileBase = "Directories" }
+        "Workspaces"             = @{ JqFile = "Workspaces.jq";               OutputFileBase = "Workspaces" }
+        # 他のキーとファイルの対応をここに追加
+    }
+
+    # 出力ファイル名に使用する日付文字列
+    $dateString = Get-Date -Format "yyyyMMdd"
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+
+    # =============================================================================
+    # メイン処理 1: 全てのJSONファイルをキーごとにグループ分け
+    # =============================================================================
+    Write-Host "--- ファイルのグループ分けを開始 ---"
+    $allJsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
+    if ($null -eq $allJsonFiles) {
+        Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
+        exit
+    }
+
+    # グループ分けするためのハッシュテーブルを初期化
+    $groupedFiles = @{}
+
+    foreach ($jsonFile in $allJsonFiles) {
+        # BOMなしUTF-8へ変換
+        $content = Get-Content -Path $jsonFile.FullName -Raw -Encoding utf8
+        [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
+
+        # JSONの最初のキーを取得
+        $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
+
+        if ($fileMapping.ContainsKey($firstKey)) {
+            # グループがまだ存在しなければ作成
+            if (-not $groupedFiles.ContainsKey($firstKey)) {
+                $groupedFiles[$firstKey] = [System.Collections.Generic.List[object]]::new()
+            }
+            # ファイル情報をグループに追加
+            $groupedFiles[$firstKey].Add($jsonFile)
+        } else {
+            Write-Warning "キー '$firstKey' のマッピング定義が見つかりません。スキップします: $($jsonFile.FullName)"
+        }
+    }
+    Write-Host "--- ファイルのグループ分けが完了 ---"
+
+    # =============================================================================
+    # メイン処理 2: グループごとにCSVファイルへ変換
+    # =============================================================================
+    foreach ($groupKey in $groupedFiles.Keys) {
+        $filesInGroup = $groupedFiles[$groupKey]
+        $mappingInfo = $fileMapping[$groupKey]
+        $jqFileName = $mappingInfo.JqFile
+        $outputFileBaseName = $mappingInfo.OutputFileBase
+        
+        # input_jsonからの相対パスを取得 (グループの最初のファイルを基準とする)
+        $firstFileInGroup = $filesInGroup[0]
+        $relativeSubDir = $firstFileInGroup.Directory.FullName.Replace($inputDir, "").TrimStart("\")
+        
+        # 使用するjqファイルのフルパスを構築
+        $jqQueryFile = "$jqQueryDir\$relativeSubDir\$jqFileName"
+
+        Write-Host "--------------------------------------------------"
+        Write-Host "グループ '$groupKey' の処理を開始します..."
+
+        try {
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
+                throw "JQクエリファイルが見つかりません: $jqQueryFile"
+            }
+
+            # ★★★ マージ処理の分岐 ★★★
+            if ($groupKey -eq "AllowedPrincipals") {
+                # --- マージする場合の処理 ---
+                Write-Host "マージ処理を実行します。対象ファイル数: $($filesInGroup.Count)"
+                
+                # 全てのファイルパスをjqの引数として準備
+                $filePaths = $filesInGroup | ForEach-Object { $_.FullName }
+
+                # 出力ファイルパスを構築
+                $csvFileName = "${dateString}_${outputFileBaseName}.csv"
+                $outputSubDir = "$outputDir\$relativeSubDir"
+                $csvOutputFile = "$outputSubDir\$csvFileName"
+                if (-not (Test-Path -Path $outputSubDir)) { New-Item -Path $outputSubDir -ItemType Directory | Out-Null }
+
+                # -s (slurp) オプションを付けて、複数のファイルを1つの配列として読み込む
+                $jqArgs = @('-s', '-r', '-f', $jqQueryFile) + $filePaths
+                
+                $jqOutput = & $jqPath $jqArgs 2>&1
+                if ($LASTEXITCODE -ne 0) { throw "jq.exeがエラーを返しました: $jqOutput" }
+
+                $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
+                Write-Host "マージCSVファイルを作成しました: $csvOutputFile"
+
+            } else {
+                # --- 通常の個別処理 ---
+                foreach ($jsonFile in $filesInGroup) {
+                    Write-Host "個別処理: $($jsonFile.Name)"
+                    $csvFileName = "${dateString}_${outputFileBaseName}.csv"
+                    # 個別処理では、出力ファイル名が重複しないよう、元のファイル名を付与する
+                    if ($filesInGroup.Count -gt 1) {
+                        $csvFileName = "${dateString}_${outputFileBaseName}_$($jsonFile.BaseName).csv"
+                    }
+                    $outputSubDir = "$outputDir\$relativeSubDir"
+                    $csvOutputFile = "$outputSubDir\$csvFileName"
+                    if (-not (Test-Path -Path $outputSubDir)) { New-Item -Path $outputSubDir -ItemType Directory | Out-Null }
+
+                    $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
+                    
+                    $jqOutput = & $jqPath $jqArgs 2>&1
+                    if ($LASTEXITCODE -ne 0) { throw "jq.exeがエラーを返しました: $jqOutput" }
+
+                    $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
+                    Write-Host "CSVファイルを作成しました: $csvOutputFile"
+                }
+            }
+        } catch {
+            Write-Warning "グループ '$groupKey' の処理中にエラーが発生しました: $($_.Exception.Message)"
+            continue
+        }
+    }
+    Write-Host "--------------------------------------------------"
+    Write-Host "全ての処理が完了しました。"
+}
+catch {
+    Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
+}
