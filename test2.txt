@@ -2,7 +2,7 @@
 # 初期設定
 # =============================================================================
 try {
-    # スクリプトが置かれているディレクトリを基準に各パスを設定
+    # スクリプトが置かれているディレクトリを基準に各パスを設定 (Join-Pathで堅牢化)
     $scriptRoot = $PSScriptRoot
     $jqPath = Join-Path $scriptRoot "jq.exe"
     $inputDir = Join-Path $scriptRoot "input_json"
@@ -21,19 +21,27 @@ try {
     }
 
     # =============================================================================
-    # JSONのキーと、それに対応するJQファイル名のマッピング
+    # ★★★ 設定項目 ★★★
+    # JSONのキーと、それに対応する「jqファイル」および「出力ファイル」のマッピング
     # =============================================================================
-    $jqQueryMap = @{
-        "SecurityGroupRules" = "aws-security-group-rules.jq"
-        "Users"              = "aws-iam-users.jq"
-        "Volumes"            = "aws-ec2-volumes.jq"
-        # 他のキーと、それに対応するクエリファイル名をここに追加
+    $fileMapping = @{
+        # "JSONの最初のキー" = @{ JqFile = "使用するjqファイル名"; OutputFileBase = "出力ファイル名のベース" }
+        "Reservations"           = @{ JqFile = "instances.jq";                OutputFileBase = "instances" }
+        "LoadBalancers"          = @{ JqFile = "LoadBalancers.jq";            OutputFileBase = "LoadBalancers" }
+        "SecurityGroups"         = @{ JqFile = "SecurityGroups.jq";           OutputFileBase = "SecurityGroups" }
+        "VpcEndpointConnections" = @{ JqFile = "VpcEndpointConnections.jq";   OutputFileBase = "VpcEndpointConnections" }
+        "AllowedPrincipals"      = @{ JqFile = "AllowedPrincipals.jq";        OutputFileBase = "AllowedPrincipals" }
+        "Directories"            = @{ JqFile = "Directories.jq";              OutputFileBase = "Directories" }
+        "Workspaces"             = @{ JqFile = "Workspaces.jq";               OutputFileBase = "Workspaces" }
+        # 他のキーとファイルの対応をここに追加
     }
+
+    # 出力ファイル名に使用する日付文字列
+    $dateString = Get-Date -Format "yyyyMMdd"
 
     # =============================================================================
     # メイン処理
     # =============================================================================
-
     $jsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
 
     if ($null -eq $jsonFiles) {
@@ -43,68 +51,73 @@ try {
 
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 
-    # ★★★ 修正箇所 ★★★
-    # jq.exe の情報をスクリプト開始時に一度だけ取得しておく
-    $jqCmd = Get-Command $jqPath -ErrorAction Stop
-
     foreach ($jsonFile in $jsonFiles) {
-        
         Write-Host "--------------------------------------------------"
         Write-Host "処理開始: $($jsonFile.FullName)"
 
         try {
             # ---
-            # 1. インプットファイルをBOMなしUTF-8に変換
+            # 1. BOMなしUTF-8へ変換
             # ---
             $content = Get-Content -Path $jsonFile.FullName -Raw -Encoding utf8
             [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
             Write-Host "[1/3] BOMなしUTF-8へ変換完了"
 
             # ---
-            # 2. jq.exeを用いて、使用するJQファイルを動的に決定
+            # 2. JSONキーに基づき、使用するファイル名を決定
             # ---
-            # 取得済みのコマンド情報を使ってjqを実行
-            $firstKey = (& $jqCmd.Source -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
+            $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
 
-            if ([string]::IsNullOrEmpty($firstKey) -or -not $jqQueryMap.ContainsKey($firstKey)) {
-                throw "JSONのキー'$firstKey'に対応するJQファイルがマッピングに見つかりません。スクリプト内の`$jqQueryMap`を確認してください。"
+            if (-not $fileMapping.ContainsKey($firstKey)) {
+                throw "JSONキー '$firstKey' に対応する定義がマッピングに見つかりません。スクリプト内の`$fileMapping`を確認してください。"
             }
-            
+
+            # マッピングから対応するファイル名を取得
+            $mappingInfo = $fileMapping[$firstKey]
+            $jqFileName = $mappingInfo.JqFile
+            $outputFileBaseName = $mappingInfo.OutputFileBase
+
+            # input_jsonからの相対パスを取得
             $relativeSubDir = $jsonFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
-            $jqQueryFileName = $jqQueryMap[$firstKey]
-            $jqQueryFile = Join-Path $jqQueryDir $relativeSubDir $jqQueryFileName
 
-            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
-                throw "対応するJQファイルが見つかりません。次のパスを確認してください: $jqQueryFile"
-            }
-            Write-Host "[2/3] 使用するJQファイルを決定: $jqQueryFile"
-
-            # ---
-            # 3. jq.exeを用いてCSVに変換し、指定フォルダに保存
-            # ---
+            # 使用するjqファイルのフルパスを構築
+            $jqQueryFile = Join-Path $jqQueryDir $relativeSubDir $jqFileName
+            
+            # 出力するCSVファイルのフルパスを構築
+            $csvFileName = "${dateString}_${outputFileBaseName}.csv"
             $outputSubDir = Join-Path $outputDir $relativeSubDir
-            $csvOutputFile = Join-Path $outputSubDir ($jsonFile.BaseName + ".csv")
+            $csvOutputFile = Join-Path $outputSubDir $csvFileName
 
+            Write-Host "[2/3] JQクエリ '$jqQueryFile' を使用し、'$csvOutputFile' に出力します。"
+
+            # ---
+            # 3. jqでCSVに変換し、ファイルに保存
+            # ---
+            if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
+                throw "JQクエリファイルが見つかりません: $jqQueryFile"
+            }
             if (-not (Test-Path -Path $outputSubDir -PathType Container)) {
                 New-Item -Path $outputSubDir -ItemType Directory | Out-Null
             }
 
             $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
             
-            # 取得済みのコマンド情報($jqCmd)を使って、より確実に実行
-            $jqOutput = & $jqCmd.Source $jqArgs 2>&1
+            # jqを実行し、結果を変数に格納
+            $jqOutput = & $jqPath $jqArgs 2>&1
 
+            # jqの実行結果を確認
             if ($LASTEXITCODE -ne 0) {
                 throw "jq.exeがエラーを返しました: $jqOutput"
             }
 
+            # 成功した場合のみファイルに書き込み
             $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
             
-            Write-Host "[3/3] CSVファイルを作成しました: $csvOutputFile"
+            Write-Host "[3/3] CSVファイルの作成が完了しました。"
         }
         catch {
             Write-Warning "エラーが発生しました: $($_.Exception.Message)"
-            continue
+            continue # エラーが発生しても次のファイルの処理へ
         }
     }
     Write-Host "--------------------------------------------------"
