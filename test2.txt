@@ -21,7 +21,6 @@ try {
     }
 
     # =============================================================================
-    # ★★★ 新しい設定項目 ★★★
     # JSONのキーと、それに対応するJQファイル名のマッピング
     # =============================================================================
     $jqQueryMap = @{
@@ -31,12 +30,10 @@ try {
         # 他のキーと、それに対応するクエリファイル名をここに追加
     }
 
-
     # =============================================================================
     # メイン処理
     # =============================================================================
 
-    # input_jsonフォルダ配下のすべてのjsonファイルを再帰的に取得
     $jsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
 
     if ($null -eq $jsonFiles) {
@@ -44,10 +41,8 @@ try {
         exit
     }
 
-    # BOMなしUTF-8のエンコーディング設定
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 
-    # 各JSONファイルに対して処理を実行
     foreach ($jsonFile in $jsonFiles) {
         
         Write-Host "--------------------------------------------------"
@@ -61,67 +56,60 @@ try {
             [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
             Write-Host "[1/3] BOMなしUTF-8へ変換完了"
 
-
             # ---
             # 2. jq.exeを用いて、使用するJQファイルを動的に決定
             # ---
-            
-            # jqを使ってJSONの最初のキーを取得
             $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
 
-            # キーが取得できたか、マッピングに存在するかをチェック
             if ([string]::IsNullOrEmpty($firstKey) -or -not $jqQueryMap.ContainsKey($firstKey)) {
                 throw "JSONのキー'$firstKey'に対応するJQファイルがマッピングに見つかりません。スクリプト内の`$jqQueryMap`を確認してください。"
             }
             
-            # input_jsonからの相対的なサブディレクトリパスを取得
             $relativeSubDir = $jsonFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
-
-            # マッピング定義とサブディレクトリから、使用するjqファイルのフルパスを構築
             $jqQueryFileName = $jqQueryMap[$firstKey]
             $jqQueryFile = Join-Path $jqQueryDir $relativeSubDir $jqQueryFileName
 
-            # 最終的なjqファイルの存在をチェック
             if (-not (Test-Path -Path $jqQueryFile -PathType Leaf)) {
                 throw "対応するJQファイルが見つかりません。次のパスを確認してください: $jqQueryFile"
             }
             Write-Host "[2/3] 使用するJQファイルを決定: $jqQueryFile"
 
-
             # ---
             # 3. jq.exeを用いてCSVに変換し、指定フォルダに保存
             # ---
-            
-            # 出力先のサブフォルダとファイルパスを構築
             $outputSubDir = Join-Path $outputDir $relativeSubDir
             $csvOutputFile = Join-Path $outputSubDir ($jsonFile.BaseName + ".csv")
 
-            # 出力先のサブフォルダがなければ作成
             if (-not (Test-Path -Path $outputSubDir -PathType Container)) {
                 New-Item -Path $outputSubDir -ItemType Directory | Out-Null
             }
 
-            # jqコマンドの引数を配列として定義
             $jqArgs = @('-r', '-f', $jqQueryFile, $jsonFile.FullName)
+            
+            # ★★★★★ 変更点：jqの実行とファイル出力を分離 ★★★★★
+            
+            # まずjqを実行し、標準出力と標準エラー出力を変数に格納
+            $jqOutput = & $jqPath $jqArgs 2>&1
 
-            # jqコマンドを実行
-            & $jqPath $jqArgs | Set-Content -Path $csvOutputFile -Encoding utf8
+            # jq.exeの終了コードを確認
+            if ($LASTEXITCODE -ne 0) {
+                # 0以外はエラーとみなし、jqの出力をエラーメッセージとしてスローする
+                throw "jq.exeがエラーを返しました: $jqOutput"
+            }
 
-            # $LASTEXITCODE を使ったエラーチェックは、パイプライン(|)の後では信頼できないため、
-            # Set-Contentが成功したことをもって成功とみなす
+            # 成功した場合のみ、結果をファイルに書き込む
+            $jqOutput | Set-Content -Path $csvOutputFile -Encoding utf8
             
             Write-Host "[3/3] CSVファイルを作成しました: $csvOutputFile"
         }
         catch {
-            # throwされたエラーメッセージをキャッチして表示
             Write-Warning "エラーが発生しました: $($_.Exception.Message)"
-            continue # 次のファイルの処理へ
+            continue
         }
     }
     Write-Host "--------------------------------------------------"
     Write-Host "全ての処理が完了しました。"
 }
 catch {
-    # スクリプト全体で発生した致命的なエラーをキャッチ
     Write-Error "致命的なエラーが発生しました: $($_.Exception.Message)"
 }
