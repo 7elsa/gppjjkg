@@ -101,11 +101,10 @@ try {
             
             # マージ対象ファイルのフルパスを取得し、存在確認
             foreach ($file in $task.InputFiles) {
-                # input_jsonフォルダ内からファイルを再帰的に検索
                 $found = Get-ChildItem -Path $inputDir -Filter $file -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
                 if ($found) {
                     $inputJsonPaths += $found.FullName
-                    $processedFiles.Add($found.FullName) # 個別処理から除外するために記録
+                    $processedFiles.Add($found.FullName)
                 } else {
                     Write-Warning "マージ対象ファイルが見つかりません: $file"
                     $allFilesFound = $false
@@ -119,14 +118,13 @@ try {
             $jqQueryFile = Join-Path $jqQueryDir $task.JqQuery
             $csvOutputFile = Join-Path $outputDir $task.OutputCsv
             
-            # (省略) BOMなしUTF8変換処理
+            # BOMなしUTF8変換処理
             $inputJsonPaths | ForEach-Object {
-                 $content = Get-Content -Path $_ -Raw
+                 $content = Get-Content -Path $_ -Raw -Encoding utf8
                  [System.IO.File]::WriteAllText($_, $content, $utf8WithoutBom)
             }
 
             try {
-                 # jqコマンド実行 (-s オプションで入力を配列として扱う)
                 $jqArgs = @('-s', '-r', '-f', $jqQueryFile) + $inputJsonPaths
                 & $jqPath $jqArgs | Set-Content -Path $csvOutputFile -Encoding utf8
                 Write-Host "マージCSVファイルを作成しました: $csvOutputFile"
@@ -151,15 +149,15 @@ try {
         Write-Host "--- 処理開始: $($jsonFile.FullName) ---"
         try {
             # BOMなしUTF-8へ変換
-            $content = Get-Content -Path $jsonFile.FullName -Raw
+            $content = Get-Content -Path $jsonFile.FullName -Raw -Encoding utf8
             [System.IO.File]::WriteAllText($jsonFile.FullName, $content, $utf8WithoutBom)
             Write-Host "[1/2] BOMなしUTF-8へ変換完了"
 
-            # JSONの内容から最初のキーを取得 (要件1対応)
-            # -Depth 1 でネストが深い巨大ファイルのパースを高速化
-            $firstKey = ($content | ConvertFrom-Json -Depth 1 -ErrorAction SilentlyContinue).PSObject.Properties.Name[0]
+            # ★★★★★ 変更点 ★★★★★
+            # jq.exeを使ってJSONの最初のキーを取得 (要件1対応)
+            $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
 
-            if ($null -eq $firstKey -or -not $jqQueryMap.ContainsKey($firstKey)) {
+            if ([string]::IsNullOrEmpty($firstKey) -or -not $jqQueryMap.ContainsKey($firstKey)) {
                 throw "対応するJQクエリが見つかりません。JSONの最初のキーを確認してください: (キー: '$firstKey')"
             }
 
