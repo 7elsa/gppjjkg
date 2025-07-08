@@ -2,12 +2,12 @@
 # 初期設定
 # =============================================================================
 try {
-    # スクリプトが置かれているディレクトリを基準に各パスを設定 (Join-Pathで堅牢化)
+    # スクリプトが置かれているディレクトリを基準に各パスを設定
     $scriptRoot = $PSScriptRoot
-    $jqPath = Join-Path $scriptRoot "jq.exe"
-    $inputDir = Join-Path $scriptRoot "input_json"
-    $jqQueryDir = Join-Path $scriptRoot "jq_query"
-    $outputDir = Join-Path $scriptRoot "output_csv"
+    $jqPath = $scriptRoot + "\jq.exe"
+    $inputDir = $scriptRoot + "\input_json"
+    $jqQueryDir = $scriptRoot + "\jq_query"
+    $outputDir = $scriptRoot + "\output_csv"
 
     # 必須ファイルの存在チェック
     if (-not (Test-Path -Path $jqPath -PathType Leaf)) { throw "jq.exe が見つかりません: $jqPath" }
@@ -81,12 +81,12 @@ try {
             $relativeSubDir = $jsonFile.Directory.FullName.Replace($inputDir, "").TrimStart("\")
 
             # 使用するjqファイルのフルパスを構築
-            $jqQueryFile = Join-Path $jqQueryDir $relativeSubDir $jqFileName
+            $jqQueryFile = $jqQueryDir + "\" + $relativeSubDir + "\" + $jqFileName
             
             # 出力するCSVファイルのフルパスを構築
             $csvFileName = "${dateString}_${outputFileBaseName}.csv"
-            $outputSubDir = Join-Path $outputDir $relativeSubDir
-            $csvOutputFile = Join-Path $outputSubDir $csvFileName
+            $outputSubDir = $outputDir + "\" + $relativeSubDir
+            $csvOutputFile = $outputSubDir + "\" + $csvFileName
 
             Write-Host "[2/3] JQクエリ '$jqQueryFile' を使用し、'$csvOutputFile' に出力します。"
 
