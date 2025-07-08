@@ -1,4 +1,15 @@
 # =============================================================================
+# ★★★ スクリプトの引数定義 ★★★
+# =============================================================================
+param(
+    # 第1引数: 対象のフォルダ名 (例: AAAAA)
+    [string]$TargetFolder,
+
+    # 第2引数: 対象のファイル名 (例: aaa.json)
+    [string]$TargetFile
+)
+
+# =============================================================================
 # 初期設定
 # =============================================================================
 try {
@@ -21,7 +32,7 @@ try {
     }
 
     # =============================================================================
-    # ★★★ 設定項目 ★★★
+    # 設定項目
     # =============================================================================
     $fileMapping = @{
         "Reservations"           = @{ JqFile = "instances.jq";                OutputFileBase = "instances" }
@@ -36,15 +47,41 @@ try {
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 
     # =============================================================================
-    # メイン処理 1: 全てのJSONファイルを「フォルダパス」と「キー」でグループ分け
+    # メイン処理 1: 引数に応じて処理対象ファイルを取得
     # =============================================================================
-    Write-Host "--- ファイルのグループ分けを開始 ---"
-    $allJsonFiles = Get-ChildItem -Path $inputDir -Filter "*.json" -Recurse
-    if ($null -eq $allJsonFiles) {
+    $allJsonFiles = @()
+    $baseSearchPath = $inputDir
+
+    if (-not [string]::IsNullOrEmpty($TargetFolder)) {
+        $baseSearchPath = "$inputDir\$TargetFolder"
+        if (-not (Test-Path -Path $baseSearchPath -PathType Container)) {
+            throw "指定されたフォルダが見つかりません: $baseSearchPath"
+        }
+    }
+
+    if (-not [string]::IsNullOrEmpty($TargetFile)) {
+        # 第1、第2引数が両方指定された場合 (特定の単一ファイル)
+        $fullFilePath = "$baseSearchPath\$TargetFile"
+        if (-not (Test-Path -Path $fullFilePath -PathType Leaf)) {
+            throw "指定されたファイルが見つかりません: $fullFilePath"
+        }
+        $allJsonFiles = Get-Item -Path $fullFilePath
+        Write-Host "INFO: 単一ファイル $($fullFilePath) を処理します。"
+    } else {
+        # 引数がない、または第1引数(フォルダ)のみの場合
+        $allJsonFiles = Get-ChildItem -Path $baseSearchPath -Filter "*.json" -Recurse
+        Write-Host "INFO: フォルダ $($baseSearchPath) 配下のファイルを処理します。"
+    }
+    
+    if ($allJsonFiles.Count -eq 0) {
         Write-Warning "処理対象のJSONファイルが見つかりませんでした。"
         exit
     }
 
+    # =============================================================================
+    # メイン処理 2: ファイルを「フォルダパス」と「キー」でグループ分け
+    # =============================================================================
+    Write-Host "--- ファイルのグループ分けを開始 ---"
     $groupedFiles = @{}
 
     foreach ($jsonFile in $allJsonFiles) {
@@ -54,7 +91,6 @@ try {
         $firstKey = (& $jqPath -r "keys[0]" $jsonFile.FullName 2>$null).Trim()
 
         if ($fileMapping.ContainsKey($firstKey)) {
-            # グループ分けのキーを「フォルダのフルパス」と「JSONキー」の組み合わせにする
             $groupingKey = "$($jsonFile.DirectoryName)|$firstKey"
 
             if (-not $groupedFiles.ContainsKey($groupingKey)) {
@@ -68,13 +104,12 @@ try {
     Write-Host "--- ファイルのグループ分けが完了 ---"
 
     # =============================================================================
-    # メイン処理 2: グループごとにCSVファイルへ変換
+    # メイン処理 3: グループごとにCSVファイルへ変換
     # =============================================================================
     foreach ($groupKey in $groupedFiles.Keys) {
         $filesInGroup = $groupedFiles[$groupKey]
         $firstFileInGroup = $filesInGroup[0]
         
-        # グループキーを分解して、フォルダパスとJSONキーを再度取得
         $keyParts = $groupKey.Split('|')
         $directoryPath = $keyParts[0]
         $jsonKey = $keyParts[1]
@@ -91,16 +126,15 @@ try {
                 throw "JQクエリファイルが見つかりません: $jqQueryFile"
             }
 
-            # ★★★ マージ処理の分岐 (キーがAllowedPrincipalsの場合) ★★★
             if ($jsonKey -eq "AllowedPrincipals") {
                 Write-Host "マージ処理を実行します。対象ファイル数: $($filesInGroup.Count)"
                 
                 $filePaths = $filesInGroup | ForEach-Object { $_.FullName }
                 $outputSubDir = "$outputDir\$relativeSubDir"
-                $csvOutputFile = "$outputSubDir\$(${dateString)_$($mappingInfo.OutputFileBase).csv"
+                $csvOutputFile = "$outputSubDir\${dateString}_$($mappingInfo.OutputFileBase).csv"
+
                 if (-not (Test-Path -Path $outputSubDir)) { New-Item -Path $outputSubDir -ItemType Directory | Out-Null }
 
-                # -s (slurp) オプションで複数のファイルをマージ
                 $jqArgs = @('-s', '-r', '-f', $jqQueryFile) + $filePaths
                 
                 $jqOutput = & $jqPath $jqArgs 2>&1
@@ -110,11 +144,9 @@ try {
                 Write-Host "マージCSVファイルを作成しました: $csvOutputFile"
 
             } else {
-                # --- 通常の個別処理 ---
                 foreach ($jsonFile in $filesInGroup) {
                     Write-Host "個別処理: $($jsonFile.Name)"
                     
-                    # 出力ファイル名が重複しないよう、元のファイル名を付与
                     $outputFileBaseName = $mappingInfo.OutputFileBase
                     $csvFileName = "${dateString}_${outputFileBaseName}_$($jsonFile.BaseName).csv"
                     
