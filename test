@@ -1,0 +1,131 @@
+Sub GenerateJqQuery()
+    ' --- 定数と変数の定義 ---
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("クエリジェネレーター") 'シート名を日本語に変更
+    
+    Dim mainPath As String
+    Dim headerRange As Range, pathRange As Range, expandRange As Range
+    Dim lastRow As Long
+    Dim queryOutput As String
+    
+    Dim headers As Collection, paths As Collection, expands As Collection
+    Dim staticHeaders As Collection, staticPaths As Collection
+    Dim expandHeader As String, expandPath As String
+    Dim hasExpansion As Boolean
+    
+    Dim i As Integer, tempStr As String
+    
+    ' --- ワークシートから入力値を読み込み ---
+    mainPath = ws.Range("B2").Value
+    
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    If lastRow < 6 Then
+        MsgBox "抽出する項目を6行目以降に1つ以上入力してください。", vbExclamation, "入力エラー"
+        Exit Sub
+    End If
+    
+    Set headerRange = ws.Range("A6:A" & lastRow)
+    Set pathRange = ws.Range("B6:B" & lastRow)
+    Set expandRange = ws.Range("C6:C" & lastRow)
+    
+    ' --- コレクションに移し、配列展開があるか確認 ---
+    Set headers = New Collection
+    Set paths = New Collection
+    Set expands = New Collection
+    hasExpansion = False
+    
+    For i = 1 To headerRange.Cells.Count
+        If headerRange.Cells(i).Value <> "" Then
+            headers.Add headerRange.Cells(i).Value
+            paths.Add pathRange.Cells(i).Value
+            expands.Add UCase(expandRange.Cells(i).Value)
+            If UCase(expandRange.Cells(i).Value) = "Y" Then hasExpansion = True
+        End If
+    Next i
+    
+    ' --- クエリのヘッダー部分を構築 ---
+    tempStr = ""
+    For i = 1 To headers.Count
+        tempStr = tempStr & """" & headers(i) & ""","
+    Next i
+    If Len(tempStr) > 0 Then tempStr = Left(tempStr, Len(tempStr) - 1)
+    
+    queryOutput = "([" & tempStr & "] | @csv)," & vbCrLf
+    
+    ' --- クエリのボディ部分を構築 ---
+    If Not hasExpansion Then
+        ' === シンプルなケース（配列展開なし） ===
+        Dim bodyObjKVs As String: bodyObjKVs = ""
+        For i = 1 To headers.Count
+             bodyObjKVs = bodyObjKVs & """" & headers(i) & """: " & paths(i) & ", "
+        Next i
+        If Len(bodyObjKVs) > 1 Then bodyObjKVs = Left(bodyObjKVs, Len(bodyObjKVs) - 2)
+
+        Dim bodyArray As String: bodyArray = ""
+        For i = 1 To headers.Count
+            bodyArray = bodyArray & "." & headers(i) & ", "
+        Next i
+        If Len(bodyArray) > 1 Then bodyArray = Left(bodyArray, Len(bodyArray) - 2)
+
+        queryOutput = queryOutput & "(\n"
+        queryOutput = queryOutput & "  " & mainPath & " |\n"
+        queryOutput = queryOutput & "  { " & bodyObjKVs & " } |\n"
+        queryOutput = queryOutput & "  [" & bodyArray & "] | @csv\n"
+        queryOutput = queryOutput & ")"
+        
+    Else
+        ' === 複雑なケース（配列展開あり） ===
+        Set staticHeaders = New Collection
+        Set staticPaths = New Collection
+        
+        For i = 1 To headers.Count
+            If expands(i) = "N" Then
+                staticHeaders.Add headers(i)
+                staticPaths.Add paths(i)
+            Else
+                expandHeader = headers(i)
+                expandPath = paths(i)
+            End If
+        Next i
+        
+        queryOutput = queryOutput & "(\n"
+        queryOutput = queryOutput & "  " & mainPath & " |\n"
+        
+        ' 固定値の変数定義を追加
+        If staticHeaders.Count > 0 Then
+            For i = 1 To staticHeaders.Count
+                queryOutput = queryOutput & "  " & staticPaths(i) & " as $" & staticHeaders(i) & " |\n"
+            Next i
+        End If
+        
+        ' 配列展開のロジックを追加
+        Dim eLogicPath As String
+        If InStr(1, expandPath, "[]") > 0 Then
+            eLogicPath = "[ " & expandPath & " ]"
+        Else
+            eLogicPath = expandPath & "[]"
+        End If
+        queryOutput = queryOutput & "  ( " & eLogicPath & " // [] | if length == 0 then [""""] else . end )[] as $" & expandHeader & " |\n"
+
+        ' 最終的なオブジェクト生成部分を追加
+        tempStr = ""
+        For i = 1 To headers.Count
+            tempStr = tempStr & """" & headers(i) & """: $" & headers(i) & ", "
+        Next i
+        If Len(tempStr) > 1 Then tempStr = Left(tempStr, Len(tempStr) - 2)
+        queryOutput = queryOutput & "  { " & tempStr & " } |\n"
+        
+        ' 最終的なCSV用配列を追加
+        tempStr = ""
+        For i = 1 To headers.Count
+            tempStr = tempStr & "." & headers(i) & ", "
+        Next i
+        If Len(tempStr) > 1 Then tempStr = Left(tempStr, Len(tempStr) - 2)
+        queryOutput = queryOutput & "  [" & tempStr & "] | @csv\n"
+        queryOutput = queryOutput & ")"
+    End If
+    
+    ' --- 結果をワークシートに出力 ---
+    ws.Range("B12").Value = queryOutput
+
+End Sub
