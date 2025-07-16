@@ -1,0 +1,32 @@
+
+
+=LET(headers, FILTER(A7:A20, A7:A20<>""), "([""" & TEXTJOIN(""",""", TRUE, headers) & """] | @csv)," & CHAR(10))
+
+
+
+
+="(\n  " & B2 & " |\n"
+
+
+
+=TEXTJOIN(CHAR(10), TRUE, IF(C7:C20="固定値", "  " & B7:B20 & " as $" & A7:A20 & " |", ""))
+
+
+
+=TEXTJOIN(CHAR(10), TRUE, LET(type, C7:C20, path, B7:B20, header, A7:A20, pattern_simple, "  ( " & path & "[] // [] | if length == 0 then [""""] else . end )[] as $" & header & " |", pattern_nested, "  ( [ " & path & " ] // [] | if length == 0 then [""""] else . end )[] as $" & header & " |", IF(type="配列展開", pattern_simple, IF(type="ネスト配列展開", pattern_nested, ""))))
+
+
+=LET(headers, FILTER(A7:A20, A7:A20<>""), kvs, TEXTJOIN(", ", TRUE, """" & headers & """: $" & headers), "  { " & kvs & " } |")
+
+
+=LET(headers, FILTER(A7:A20, A7:A20<>""), items, TEXTJOIN(", ", TRUE, "." & headers), "  [" & items & "] | @csv")
+
+
+=")"
+
+
+
+
+
+
+=CONCAT(E2, E3, IF(E4="", "", E4 & CHAR(10)), IF(E5="", "", E5 & CHAR(10)), E6, CHAR(10), E7, CHAR(10), E8)
