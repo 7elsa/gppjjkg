@@ -1,0 +1,81 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    指定されたJSONファイル内のすべてのスカラー値へのパスを抽出し、ファイルに出力します。
+
+.DESCRIPTION
+    jq.exe を利用してJSONオブジェクトのすべてのパスを配列として取得し、
+    PowerShellで jq のクエリ形式（例: .key[0].child）の文字列に変換します。
+    結果は重複が除去・ソートされ、指定されたファイルに出力されます。
+
+.PARAMETER InputFile
+    解析対象のJSONファイル名。
+
+.PARAMETER OutputFile
+    抽出したパス一覧を保存するファイル名。
+
+.PARAMETER JqExecutable
+    jq.exe へのパス。スクリプトと同じディレクトリにあればデフォルト値で動作します。
+
+.EXAMPLE
+    PS> .\Get-JsonAllPaths.ps1 -InputFile "describe-security-groups.json" -OutputFile "all-json-paths.txt"
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$InputFile = "describe-security-groups.json",
+
+    [Parameter(Mandatory=$false)]
+    [string]$OutputFile = "all-json-paths.txt",
+
+    [Parameter(Mandatory=$false)]
+    [string]$JqExecutable = ".\jq.exe"
+)
+
+# --- 事前チェック ---
+if (-not (Test-Path $JqExecutable)) {
+    Write-Error "jq.exe が見つかりません。'$JqExecutable' に配置されているか確認してください。"
+    return
+}
+if (-not (Test-Path $InputFile)) {
+    Write-Error "入力ファイル '$InputFile' が見つかりません。"
+    return
+}
+
+Write-Host "処理を開始します... 入力: '$InputFile'"
+
+# --- メイン処理 ---
+try {
+    # 1. jqで全パスをJSON配列の形式で1行ずつ取得 (-cオプションでコンパクト出力)
+    #    例: ["SecurityGroups",0,"IpPermissions",0,"FromPort"]
+    $jqOutput = & $JqExecutable -c "paths(scalars)" $InputFile
+
+    # 2. PowerShellでパス文字列を組み立て
+    $pathList = foreach ($line in $jqOutput) {
+        # JSON配列文字列をPowerShellオブジェクト（配列）に変換
+        $pathArray = $line | ConvertFrom-Json
+
+        # パス文字列を組み立てる
+        $currentPath = ""
+        foreach ($segment in $pathArray) {
+            # セグメントが数値型か判定し、配列アクセス `[0]` の形式にする
+            if ($segment -is [int] -or $segment -is [double] -or $segment -is [long]) {
+                $currentPath += "[$segment]"
+            }
+            # 文字列の場合はオブジェクトアクセス `.key` の形式にする
+            else {
+                $currentPath += ".$segment"
+            }
+        }
+        # 先頭の不要なドットを削除して出力
+        $currentPath.Substring(1)
+    }
+
+    # 3. 重複を除外してソートし、ファイルに出力
+    $pathList | Sort-Object -Unique | Set-Content -Path $OutputFile -Encoding UTF8
+
+    Write-Host "✅ 処理が完了しました。'$OutputFile' に全パス一覧を出力しました。"
+
+} catch {
+    Write-Error "❌ エラーが発生しました: $($_.Exception.Message)"
+}
