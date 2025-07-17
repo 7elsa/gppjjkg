@@ -1,6 +1,71 @@
-.\PROTOTYPE02.ps1 `
-  -JsonFile   Instances.json `
-  -JqOutput   Instances_test01.jq `
-  -Paths      'Reservations[].Instances[].InstanceId', `
-              'Reservations[].Instances[].NetworkInterfaces[].Groups[].GroupId' `
-  -Headers    'GroupID','SourceSecurityGroup'
+<#
+.SYNOPSIS
+  Generate a generic jq filter to convert JSON to CSV based on specified JSON paths.
+
+.PARAMETER JsonFile
+  Path to input JSON file.
+
+.PARAMETER JqOutput
+  Path to output .jq filter file.
+
+.PARAMETER Paths
+  Array of JSON paths to extract. First path must contain an array notation '[]', e.g. 'Items[].Id'.
+
+.PARAMETER Headers
+  Array of CSV header names. Must correspond to Paths order.
+#>
+param(
+    [Parameter(Mandatory)][string]    $JsonFile,
+    [Parameter(Mandatory)][string]    $JqOutput,
+    [Parameter(Mandatory)][string[]]  $Paths,
+    [Parameter(Mandatory)][string[]]  $Headers
+)
+
+# Parse first path for root array and first key
+if ($Paths[0] -match '^(?<root>[^\[]+)\[\]\.(?<first>.+)$') {
+    $rootArray = $Matches['root']       # e.g. 'Items'
+    $firstKey  = $Matches['first']      # e.g. 'Id'
+} else {
+    throw 'First path must be in format Name[].Key'
+}
+
+# Build CSV header JSON
+$headerJson = '["' + ($Headers -join '","') + '"]'
+
+# Initialize jq filter lines
+$jqLines = @()
+# Add header record
+$jqLines += '([' + $headerJson + ' | @csv]),'
+$jqLines += '('
+
+# Begin main record extraction
+$jqLines += '  .' + $rootArray + '[] |'
+$jqLines += '  .' + $firstKey   + ' as $col0 |'
+
+# Generate branches for each additional path
+for ($i = 1; $i -lt $Paths.Length; $i++) {
+    $path = $Paths[$i]
+    if ($path -match '^[^\[]+\[\]\.(.+)$') {
+        $subPath = $Matches[1]
+    } else {
+        throw "Path '$path' must start with '${rootArray}[].'"
+    }
+    $subExpr = ".${subPath}?"
+    # Build array of column expressions: $col0 + placeholders or '.'
+    $cols = @('$col0')
+    for ($j = 1; $j -lt $Paths.Length; $j++) {
+        if ($j -eq $i) { $cols += '.' } else { $cols += '""' }
+    }
+    $arrText = '[' + ($cols -join ', ') + ']'
+    $jqLines += '    (' + $subExpr + ' | ' + $arrText + '),'  
+}
+# Remove trailing comma on last branch
+$jqLines[-1] = $jqLines[-1].TrimEnd(',')
+
+# Close and pipe to CSV
+$jqLines += ')'
+$jqLines += '| @csv'
+
+# Write filter to file without BOM
+[System.IO.File]::WriteAllLines($JqOutput, $jqLines, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "Generated jq filter at $JqOutput"
