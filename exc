@@ -1,0 +1,7 @@
+=CONCAT(
+  ".\Generate-JqCsvQuery.ps1 -JsonFile ",
+  CHAR(34), A2, CHAR(34),
+  " -JqOutput ", CHAR(34), B2, CHAR(34),
+  " -Paths '", SUBSTITUTE(C2, ",", "', '"), "'",
+  " -Headers '", SUBSTITUTE(D2, ",", "', '"), "'"
+)
