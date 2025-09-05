@@ -1,0 +1,74 @@
+@echo off
+setlocal
+
+:: =================================================================
+:: 引数で渡されたファイルのプロパティを開くバッチファイル
+::
+:: [機能]
+:: 1. ファイルまたはフォルダを引数として受け取ります。
+:: 2. 引数が.zip形式でない場合、ファイル名の末尾に.zipを追記します。
+:: 3. ファイルのプロパティダイアログを開きます。
+:: 4. ユーザーがキーを押すと、ファイル名を元の状態に戻します。
+:: =================================================================
+
+:: 引数が渡されているかチェック
+if "%~1"=="" (
+    echo ファイルまたはフォルダを、このバッチファイルにドラッグ＆ドロップしてください。
+    echo.
+    pause
+    exit /b
+)
+
+:: 引数の対象が存在するかチェック
+if not exist "%~1" (
+    echo 指定された "%~1" が見つかりません。
+    pause
+    exit /b
+)
+
+:: 拡張子を取得
+set "FILE_EXT=%~x1"
+
+:: 拡張子が.zipかどうかを判定 (大文字・小文字は区別しない)
+if /i "%FILE_EXT%" == ".zip" (
+    :: ■ .zipファイルの場合の処理
+    echo "%~nx1" のプロパティを開きます...
+    rundll32.exe shell32.dll,SHObjectProperties "%~f1"
+
+) else (
+    :: ■ .zipファイル以外の場合の処理
+
+    :: 元のファイル名と変更後のファイル名を変数に格納
+    set "ORIGINAL_FULLPATH=%~f1"
+    set "RENAMED_FILENAME=%~nx1.zip"
+
+    echo "%~nx1" を一時的に "%RENAMED_FILENAME%" へ変更します。
+    ren "%ORIGINAL_FULLPATH%" "%RENAMED_FILENAME%"
+
+    :: 名前の変更が成功したかチェック
+    if errorlevel 1 (
+        echo ファイル名の変更に失敗しました。アクセス権などを確認してください。
+        echo.
+        pause
+        exit /b
+    )
+
+    echo.
+    echo "%RENAMED_FILENAME%" のプロパティを開きます...
+    rundll32.exe shell32.dll,SHObjectProperties "%ORIGINAL_FULLPATH%.zip"
+
+    echo.
+    echo ============================================================
+    echo  プロパティの確認後、この画面で何かキーを押してください。
+    echo  ファイル名を元の状態に戻します。
+    echo ============================================================
+    pause > nul
+
+    echo.
+    echo ファイル名を "%~nx1" に戻しています...
+    ren "%ORIGINAL_FULLPATH%.zip" "%~nx1"
+    echo 完了しました。
+)
+
+endlocal
+exit /b
