@@ -1,0 +1,59 @@
+承知いたしました。 SessionIdが144であることを明記した内容に修正します。
+
+英語の問い合わせメール (English Inquiry)
+件名: Issue Investigation: vqlserver_shutdown safe Command Hanging
+
+本文:
+
+Dear Denodo Support Team,
+
+We are writing to report an issue we encountered while trying to shut down our Denodo VDP server.
+
+On September 29, 2025, around 19:04 (JST), we executed the vqlserver_shutdown safe command as per the official manual. However, the process got stuck, displaying the message "Stopping Denodo VQLServer ..." and did not proceed for about 30 minutes. We eventually had to cancel the process using Ctrl+C.
+
+After canceling, we ran the vqlserver_shutdown command without the safe option, and the server stopped successfully without any issues. Normally, this shutdown process completes in about one minute.
+
+We would like to request an investigation into the root cause of why the vqlserver_shutdown safe command failed to complete. We have attached the vdp-connections.log and vdp-queries.log from the time the issue occurred for your analysis.
+
+During our own preliminary investigation, we noticed a single openSession log entry for SessionId 144 in the vdp-connections.log that did not have a corresponding CloseSession entry. Our session timeout is configured to 60 minutes.
+
+We have two main questions:
+
+What is the cause of the vqlserver_shutdown safe command hanging?
+
+Is the missing CloseSession log for SessionId 144 related to this issue? If so, why wasn't the session closed even with the session timeout setting?
+
+We look forward to your analysis and guidance.
+
+Best regards,
+
+[Your Name] [Your Company Name]
+
+日本語の戻し翻訳 (Japanese Translation)
+件名: 調査依頼: vqlserver_shutdown safe コマンドがハングする事象について
+
+本文:
+
+Denodoサポートチーム様
+
+Denodo VDPサーバーを停止する際に発生した問題についてご報告いたします。
+
+2025年9月29日 19:04頃 (日本時間)、公式マニュアルに従い vqlserver_shutdown safe コマンドを実行しました。しかし、処理が "Stopping Denodo VQLServer ..." というメッセージを表示したまま停止し、約30分間先に進みませんでした。最終的に、Ctrl+Cを使用してプロセスをキャンセルする必要がありました。
+
+キャンセル後、safe オプションなしで vqlserver_shutdown コマンドを実行したところ、サーバーは問題なく正常に停止しました。通常、このシャットダウン処理は1分程度で完了します。
+
+vqlserver_shutdown safe コマンドが完了しなかった根本的な原因について調査をお願いしたく、ご連絡いたしました。分析のため、事象発生時の vdp-connections.log と vdp-queries.log を添付いたします。
+
+私達の方で一次調査を行ったところ、vdp-connections.log の中に、SessionId 144 の openSession のログエントリが1件あり、これに対応する CloseSession のエントリがないことに気づきました。なお、私達の環境のセッションタイムアウトは60分に設定されています。
+
+主に2つの点についてお伺いします。
+
+vqlserver_shutdown safe コマンドがハングした原因は何でしょうか？
+
+SessionId 144 の CloseSession ログが欠落していることは、この問題と関連がありますか？もし関連がある場合、セッションタイムアウトが設定されているにもかかわらず、なぜセッションがクローズされなかったのでしょうか？
+
+ご調査とご教示のほど、よろしくお願い申し上げます。
+
+敬具
+
+[あなたの名前] [あなたの会社名]
